@@ -1,0 +1,299 @@
+# ClaimCoin Autoclaim Change Notes
+
+## 2026-04-16 - Auto-withdraw + IconCaptcha lane
+- Reason:
+  - Boskuu asked to extend the working ClaimCoin runner with auto-withdraw and to turn the withdraw IconCaptcha into its own reusable solver lane.
+- What changed:
+  - Live-mapped the authenticated `/withdraw` page and confirmed the real submit target is `POST /withdraw/withdraw`.
+  - Pinned the withdraw form fields that matter in practice: `csrf_token_name`, `method`, `amount`, `wallet`, `_iconcaptcha-token`, `ic-rq`, `ic-wid`, and `ic-cid`.
+  - Proved the IconCaptcha challenge can be solved from the live canvas itself by splitting the 5-cell strip, grouping visually identical cells, and selecting the icon that appears the least number of times.
+  - Repeated that live solver test across multiple fresh ClaimCoin widgets and got repeated `VERIFICATION COMPLETE.` success oracles, so this is no longer a one-sample guess.
+  - Added built-in IconCaptcha solver support to the ClaimCoin codebase, plus optional config hooks for a standalone external `iconcaptcha-solver` repo.
+  - Added withdraw config per account under `withdraw:` with method, wallet, threshold, keep-balance, fixed-amount override, and captcha mode.
+  - Added `withdraw-once` CLI support and wired `run-loop` so it can attempt withdraw automatically after normal claim cycles for accounts that explicitly enable withdraw.
+  - Added parser coverage for withdraw form state and SweetAlert-style withdraw response messages.
+  - Safely probed the submit lane with deliberately invalid data after a solved IconCaptcha and confirmed the server returns real validation oracles like `The Wallet field is required.` without needing a real payout.
+- Files touched:
+  - `projects/claimcoin-autoclaim/src/claimcoin_autoclaim/config.py`
+  - `projects/claimcoin-autoclaim/src/claimcoin_autoclaim/models.py`
+  - `projects/claimcoin-autoclaim/src/claimcoin_autoclaim/iconcaptcha_solver.py`
+  - `projects/claimcoin-autoclaim/src/claimcoin_autoclaim/parsers/withdraw.py`
+  - `projects/claimcoin-autoclaim/src/claimcoin_autoclaim/parsers/__init__.py`
+  - `projects/claimcoin-autoclaim/src/claimcoin_autoclaim/clients/captcha_client.py`
+  - `projects/claimcoin-autoclaim/src/claimcoin_autoclaim/clients/cloudflare_client.py`
+  - `projects/claimcoin-autoclaim/src/claimcoin_autoclaim/services/account_runner.py`
+  - `projects/claimcoin-autoclaim/src/claimcoin_autoclaim/services/multi_runner.py`
+  - `projects/claimcoin-autoclaim/src/claimcoin_autoclaim/services/scheduler.py`
+  - `projects/claimcoin-autoclaim/src/claimcoin_autoclaim/cli.py`
+  - `projects/claimcoin-autoclaim/accounts.example.yaml`
+  - `projects/claimcoin-autoclaim/README.md`
+  - `projects/claimcoin-autoclaim/ops/HELPER_REQUIREMENTS.md`
+  - `projects/claimcoin-autoclaim/ROADMAP.md`
+  - `projects/claimcoin-autoclaim/pyproject.toml`
+- Validation:
+  - live IconCaptcha solve against authenticated ClaimCoin withdraw widgets, repeated multiple times with `VERIFICATION COMPLETE.`
+  - safe invalid withdraw submit after solved IconCaptcha, resulting in server-side oracle `The Wallet field is required.`
+- Important observed result:
+  - The withdraw IconCaptcha lane is real and automatable from this VPS, but it is still helper-session-bound because ClaimCoin keeps the same Cloudflare/session constraints as the faucet lane.
+  - The remaining missing piece for a true live payout is not the solver anymore. It is the final production wallet + preferred withdraw method from Boskuu.
+
+## 2026-04-16 - Project kickoff
+- Reason:
+  - Boskuu requested an autoclaim script for `https://claimcoin.in/faucet` using account `lvtsundere@gmail.com`, with auto login, future multi-account support, future proxy support, and HTTP-first architecture.
+- What changed:
+  - Created project tracker files for this target.
+  - Started live target mapping and local reusable-component audit.
+  - Added initial Python project scaffold for an HTTP-first runner with config, account loading, proxy rotation, session-state storage, browser-like HTTP client wrapper, login parser, faucet parser, captcha client boundary, SQLite state store, and CLI entry points.
+  - Refactored the scaffold to run on the current VPS without extra installs by using the already-available `requests` and `PyYAML` stack instead of unavailable `httpx` / `pydantic` / `typer`.
+  - Added a first live bootstrap probe. Current hard proof is that plain HTTP reaches ClaimCoin but gets HTTP 403 on `/login` and `/faucet`, so anti-bot or pre-session clearance exists before normal form login works.
+  - Wired in the proven login boundary from live mapping: `/auth/login` POST target, CSRF field handling, and Origin/Referer headers.
+  - Added a cookie-import lane and richer CLI so a one-time browser-cleared session can be injected into the HTTP runner state and inspected locally.
+  - Added protocol notes documenting the current Cloudflare, login, captcha, and faucet boundaries.
+  - After Boskuu provided a working PHP reference script, corrected the target model: the active lane is pure HTTP/cURL, login is plain CSRF form POST to `/auth/login`, faucet readiness is `var wait`, claim endpoint is `/faucet/verify`, and the active claim captcha lane is anti-bot image ordering plus reCAPTCHA v3, not the earlier browser-first assumption.
+  - Ported the proven PHP flow structure into the Python runner: dashboard login detection, faucet wait parsing, anti-bot image extraction, `/faucet/verify` payload builder, reCAPTCHA v3 sitekey config, and Waryono-style solver polling helpers.
+  - Tightened default headers and user-agent to match the working PHP script more closely.
+  - Re-tested the front door with system `curl` using script-matching mobile Chrome headers. Current live result from this VPS is still `403` `cf-mitigated: challenge` on `/login`, which narrows the blocker to current Cloudflare challenge state / IP / client parity rather than missing faucet endpoint knowledge.
+  - Recorded Boskuu's new solver strategy in `docs/SOLVER_STRATEGY.md`: use `antibot-image-solver` for faucet anti-bot links, keep IconCaptcha solver as reusable follow-up work, treat SmartCaptcha as secondary until proven relevant, use Turnstile solver only if Cloudflare presents Turnstile, use FlareSolverr for normal Cloudflare challenge clearance, and study the referenced recaptcha-v3 lane for hardening.
+  - Added a configurable Cloudflare helper boundary in the Python runner with `cloudflare` config plus a `CloudflareClient` that can consume a FlareSolverr `/v1` endpoint and return clearance cookies and user-agent material.
+  - Wired `AccountRunner` so bootstrap/login/claim probes can attempt a FlareSolverr-based Cloudflare recovery path when direct HTTP still fails at the front door.
+  - Started a local FlareSolverr runtime from the existing workspace experiment tree and proved a live front-door recovery: FlareSolverr can fetch `https://claimcoin.in/login` and return real `cf_clearance`, `ci_session`, `csrf_cookie_name`, and login HTML from this VPS.
+  - Proved an important negative result right after that: reusing the returned cookies plus matching user-agent in normal `requests` or shell `curl` is still not enough. The site goes back to `403 cf-mitigated: challenge`, so simple cookie transplant is not a sufficient clearance lane here.
+  - Proved a second important nuance on the FlareSolverr side: a session-backed `request.post` to `/auth/login` reaches the login page but returns `Invalid Details`, and FlareSolverr source inspection shows its helper builds a synthetic HTML form from decoded `postData`. For passwords containing `&`, such as Boskuu's current ClaimCoin password, that helper likely re-encodes the value in a way that can corrupt credential submission.
+  - Added richer `CloudflareClient` primitives for `sessions.create`, `request.get`, `request.post`, and `sessions.destroy` so the next lane can keep Cloudflare-bound requests inside the helper session instead of assuming cookie transplant will work.
+  - Added `docs/SURFACE_MAP.md` and a first public feature inventory. Even before auth is working, ClaimCoin's homepage clearly advertises faucet, PTC, shortlinks, coupon, offerwall, achievement, weekly contest, login bonus, and referral income as likely automation lanes.
+  - Integrated Boskuu's solver split into the Python runner config. `CaptchaConfig` now supports dedicated `antibot_endpoint` and `recaptcha_v3_endpoint` fields plus a `hybrid` mode.
+  - Updated `CaptchaClient` so ClaimCoin anti-bot can call the local `antibot-image-solver` API directly and reCAPTCHA v3 can call the separate rv3 HTTP helper directly, while the older Waryono-compatible lane remains available as fallback.
+  - Updated claim submission so the reCAPTCHA v3 helper is asked for a token against the faucet page URL itself instead of the bare site root.
+  - Verified environment readiness for the antibot lane: `tesseract 5.3.4` is already present on Rawon.
+  - Probed the current public rv3 endpoint shape and got server-side `500`, so treat the Hugging Face rv3 helper as an intended integration contract for now, not yet a proven healthy live dependency from this VPS.
+  - Brought the local `antibot-image-solver` up for real on Rawon. Installed it into its own venv under the cloned repo and verified `GET http://127.0.0.1:8010/health -> 200`.
+  - Ran real browser-submit diagnostics for login. A Selenium submit from this VPS hits `Just a moment...` on `POST /auth/login` and stays there for at least 60 seconds, which proves there is a post-submit Cloudflare-managed challenge path in this environment.
+  - Patched the local FlareSolverr experiment so `request.post` no longer corrupts form values containing `&`. The helper now parses query strings safely instead of splitting raw form data on `&`.
+  - After that FlareSolverr patch, helper-session login changed from `special-character-corruption suspected` to a clearer truth result: the site accepts the submit transport but still answers `200 /login` with flash `Invalid Details` for the current provided account.
+  - Updated `AccountRunner` to use helper-session recovery more intelligently. `check` can now recover through a FlareSolverr helper session, and `login-probe` now reports the helper-session truth oracle instead of stopping at the earlier front-door `403` only.
+  - Found and fixed one more helper-session mismatch: the Python runner's FlareSolverr session lane was not forwarding the mobile runtime user-agent into `sessions.create` / `request.get` / `request.post` even though the main runtime config was already aligned to the reference PHP script.
+  - Found and fixed a misleading local-diagnostics bug in the experimental FlareSolverr tree: `utils.get_user_agent()` was reusing a stale startup cache even when a request session had a different override. After the patch it now reports the active driver UA for live sessions.
+  - Re-tested helper-session login after both fixes. Result stayed the same with the correct mobile UA in place: `200 /login` and flash `Invalid Details`. That materially strengthens the conclusion that the remaining blocker is no longer UA parity or form encoding.
+  - Refined `claim-once` failure reporting so the command now surfaces the helper-session auth oracle directly when normal HTTP claim bootstrap dies at `/dashboard`. Practical result: claim runs now report `login probe helper session rejected credentials with Invalid Details` instead of burying that truth under a later `403 /dashboard` wrapper.
+  - Restarted `antibot-image-solver` in a detached way so the local primary anti-bot endpoint is alive again at `127.0.0.1:8010` for the next live faucet test.
+  - Hardened helper-session login diagnostics again. After `POST /auth/login`, the runner now probes `/dashboard` and `/faucet` inside the same cleared helper session so future outputs can distinguish `invalid form response` from `session actually became authenticated`.
+  - Live result of that new probe on Rawon: after the `Invalid Details` submit, both `/dashboard` and `/faucet` resolve to `https://claimcoin.in/` with homepage HTML. That confirms the current session is not silently authenticated.
+  - Ran comparison submits with the current provided credentials, a deliberately wrong password, and a deliberately wrong email. All three currently produce the same outward failure signature in the helper-session lane: `200 /login`, flash `Invalid Details`, and no authenticated follow-up route access. That does not prove the current credentials are wrong, but it does prove the current server response is indistinguishable from an ordinary bad-credential failure from this lane.
+  - Boskuu then provided another account candidate, `holiskabe@gmail.com / Yuda&4321`, and that one authenticated successfully through the same helper-session lane. This is strong proof that the auth architecture is sound and the earlier `lvtsundere@gmail.com` blocker was account-specific rather than a universal login implementation failure.
+  - With the valid `holiskabe` session, `/dashboard` and `/faucet` are both reachable in the helper lane. Live faucet HTML also proved a more valuable detail: the page already contains a prefilled hidden `recaptchav3` token, plus hidden `csrf_token_name` and `antibotlinks` fields.
+  - The local anti-bot solver service timed out over HTTP on the real ClaimCoin challenge, but the solver core itself succeeded in `fast` OCR mode when called directly from its venv. So the real OCR/matcher lane works; the current issue there is service/runtime behavior, not challenge impossibility.
+  - First live `/faucet/verify` submit was attempted with the valid `holiskabe` session, the page-provided `recaptchav3`, and a successful local anti-bot solve. The server answered with a CodeIgniter-style `Error` page: `It looks like that you opened multiple forms and submit them one by one without reloading.` This moves the active blocker from auth to claim-submit semantics.
+  - A direct DOM/browser attempt to avoid the synthetic helper-post path was also tested, but plain Selenium login from this VPS still hit Cloudflare `Just a moment...` on `/auth/login`. So the cleanest next lane is to preserve helper-session auth while changing how `/faucet/verify` is submitted, not to abandon the helper and rely on raw Selenium login.
+  - Root cause of that supposed multi-form blocker was then traced to a local parser bug. Real faucet HTML renders the CSRF input as `name="csrf_token_name" id="token" value="..."`, while the old parser only matched cases where `name` was followed immediately by `value`. Practical effect: helper claim submits were accidentally sending an empty `csrf_token_name`, which naturally triggered the CodeIgniter CSRF error page.
+  - Fixed faucet parsing so claim-form hidden inputs are now read from the real `/faucet/verify` form regardless of attribute order, and ClaimCoin state now also preserves page-provided hidden fields such as `recaptchav3` for reuse.
+  - Added a new `request.dom_submit` command to the local FlareSolverr experiment so the runner can submit the already-open live faucet form from the same helper browser context instead of fabricating a detached `data:` form page for `/faucet/verify`.
+  - Extended the Python `CloudflareClient` to call that same-page DOM submit helper, then wired `AccountRunner.claim_once()` to use a full helper-session claim lane when direct HTTP still dies behind the session-bound Cloudflare barrier.
+  - Hardened `CaptchaClient` with a direct anti-bot solver-core fallback. If the local HTTP service at `127.0.0.1:8010` times out on a real ClaimCoin image set, the runner can now call the installed `antibot-image-solver` core directly from its venv in `fast` OCR mode.
+  - Live result after those fixes: the real product command path now works. `claim-once` using the working account `holiskabe@gmail.com / Yuda&4321` succeeded through the helper-session lane. Verified success oracles already seen include `Good job!, 31 tokens has been added to your balance success` and `12 CCP has been added to your balance`.
+  - Hardened the helper-session claim lane again after default-config verification exposed solver-shaped flakiness. The anti-bot solver core is now preferred ahead of the local HTTP wrapper, and helper claim now retries with a fresh faucet page up to three times on `Invalid Anti-Bot Links` or `Invalid Captcha` before giving up.
+  - Started the next authenticated lane after faucet: shortlinks. Live `/links` inspection on the working account now proves the real shortlink entry pattern is `/links/go/<id>`, with current visible cards `ShrinkEarn`, `Shrinkme`, `Shortano`, `Shortino`, and `EarNow`.
+  - Followed one real shortlinks lane to its ClaimCoin reward boundary. `https://claimcoin.in/links/go/85` redirects to the external alias `https://shrinkme.click/G5zGhyl`.
+  - Reused the already-maintained `projects/shortlink-bypass-bot` engine against that alias and got a final callback URL `https://claimcoin.in/links/back/kEQsBGWR1Pl9M2aH0dSu` through the proven `mrproblogger-direct` chain.
+  - Verified the ClaimCoin side of that shortlinks callback inside an authenticated helper session. Opening `/links/back/kEQsBGWR1Pl9M2aH0dSu` returns to `/links`, shows success oracle `Good job! 120 CCP has been added to your balance`, and decrements the `Shrinkme` quota from `Claim 1/1` to `Claim 0/1` so the card disappears from the refreshed list.
+  - Converted those shortlinks findings into code foundations inside the ClaimCoin project itself. Added `ShortlinkOffer` / `ShortlinksState` models, a new `parse_links_state()` parser, `LinksClient`, and a CLI probe command `links-probe` so the runner can now fetch and print the live `/links` wall through the same helper-session auth lane.
+- Files touched:
+  - `projects/claimcoin-autoclaim/ROADMAP.md`
+  - `projects/claimcoin-autoclaim/CHANGE_NOTES.md`
+  - `projects/claimcoin-autoclaim/pyproject.toml`
+  - `projects/claimcoin-autoclaim/.gitignore`
+  - `projects/claimcoin-autoclaim/README.md`
+  - `projects/claimcoin-autoclaim/accounts.example.yaml`
+  - `projects/claimcoin-autoclaim/accounts.yaml`
+  - `projects/claimcoin-autoclaim/accounts.example.yaml`
+  - `projects/claimcoin-autoclaim/proxies.example.txt`
+  - `projects/claimcoin-autoclaim/src/claimcoin_autoclaim/__init__.py`
+  - `projects/claimcoin-autoclaim/src/claimcoin_autoclaim/config.py`
+  - `projects/claimcoin-autoclaim/src/claimcoin_autoclaim/account_store.py`
+  - `projects/claimcoin-autoclaim/src/claimcoin_autoclaim/proxy_pool.py`
+  - `projects/claimcoin-autoclaim/src/claimcoin_autoclaim/session_state.py`
+  - `projects/claimcoin-autoclaim/src/claimcoin_autoclaim/http.py`
+  - `projects/claimcoin-autoclaim/src/claimcoin_autoclaim/runner.py`
+  - `projects/claimcoin-autoclaim/src/claimcoin_autoclaim/cli.py`
+  - `projects/claimcoin-autoclaim/src/claimcoin_autoclaim/models.py`
+  - `projects/claimcoin-autoclaim/docs/PROTOCOL.md`
+  - `projects/claimcoin-autoclaim/docs/SOLVER_STRATEGY.md`
+  - `projects/claimcoin-autoclaim/docs/SURFACE_MAP.md`
+  - `/root/.openclaw/media/inbound/bot---e401800a-c2d1-45a4-b16d-26265f24003e` (reference PHP script analyzed, not modified)
+  - `projects/claimcoin-autoclaim/src/claimcoin_autoclaim/logging_config.py`
+  - `projects/claimcoin-autoclaim/src/claimcoin_autoclaim/clients/__init__.py`
+  - `projects/claimcoin-autoclaim/src/claimcoin_autoclaim/clients/http_client.py`
+  - `projects/claimcoin-autoclaim/src/claimcoin_autoclaim/clients/auth_client.py`
+  - `projects/claimcoin-autoclaim/src/claimcoin_autoclaim/clients/faucet_client.py`
+  - `projects/claimcoin-autoclaim/src/claimcoin_autoclaim/clients/captcha_client.py`
+  - `projects/claimcoin-autoclaim/src/claimcoin_autoclaim/clients/cloudflare_client.py`
+  - `projects/claimcoin-autoclaim/src/claimcoin_autoclaim/parsers/__init__.py`
+  - `projects/claimcoin-autoclaim/src/claimcoin_autoclaim/parsers/auth.py`
+  - `projects/claimcoin-autoclaim/src/claimcoin_autoclaim/parsers/dashboard.py`
+  - `projects/claimcoin-autoclaim/src/claimcoin_autoclaim/parsers/faucet.py`
+  - `projects/claimcoin-autoclaim/src/claimcoin_autoclaim/services/__init__.py`
+  - `projects/claimcoin-autoclaim/src/claimcoin_autoclaim/services/account_runner.py`
+  - `state/flaresolverr-exp/src/src/flaresolverr_service.py`
+  - `state/flaresolverr-exp/src/PROFILE_PATCH.md`
+  - `projects/claimcoin-autoclaim/src/claimcoin_autoclaim/services/claim_service.py`
+  - `projects/claimcoin-autoclaim/src/claimcoin_autoclaim/services/multi_runner.py`
+  - `projects/claimcoin-autoclaim/src/claimcoin_autoclaim/services/scheduler.py`
+  - `projects/claimcoin-autoclaim/src/claimcoin_autoclaim/state/__init__.py`
+  - `projects/claimcoin-autoclaim/src/claimcoin_autoclaim/state/store.py`
+  - `projects/claimcoin-autoclaim/src/claimcoin_autoclaim/utils/__init__.py`
+  - `projects/claimcoin-autoclaim/src/claimcoin_autoclaim/utils/headers.py`
+  - `projects/claimcoin-autoclaim/src/claimcoin_autoclaim/utils/proxies.py`
+  - `projects/claimcoin-autoclaim/src/claimcoin_autoclaim/utils/timing.py`
+- Evidence / trigger:
+  - New direct request from Boskuu on 2026-04-16 10:44 UTC.
+- Validation:
+  - `python3 -m compileall src`
+  - `PYTHONPATH=src python3 -m claimcoin_autoclaim.cli check --config accounts.yaml`
+  - `PYTHONPATH=src python3 -m claimcoin_autoclaim.cli claim-once --config accounts.yaml`
+  - `PYTHONPATH=src python3 -m claimcoin_autoclaim.cli claim-once --config /tmp/claimcoin-holiskabe-live.yaml`
+- Important observed result:
+  - the current Python `requests` implementation still stops at HTTP 403 on `/login` and `/dashboard` even after closer header/UA alignment with the working PHP script.
+  - a direct system `curl` re-test with the same style headers also still returns `403` `cf-mitigated: challenge` and `Just a moment...` on `/login` from this VPS.
+  - Practical meaning: the working PHP reference script fixed the architectural misunderstanding, but the live environment still has an active Cloudflare front-door blocker from this current IP/runtime. So the next bypass/debug step must target that live challenge boundary specifically, not re-litigate app routes blindly.
+  - a later source/live mapping pass also pinned the likely login boundary more sharply: `GET /login` then `POST /auth/login`, with `ci_session`, `csrf_cookie_name`, and `csrf_token_name` in play.
+  - FlareSolverr can clear the front door and fetch the login page from this VPS, but the clearance remains helper-session-bound in practice.
+  - the old FlareSolverr `request.post` corruption suspicion was real. After patching it locally, the helper-session lane now preserves `Yuda&4321` correctly.
+  - with transport corruption removed and mobile UA parity restored, the current best login oracle is now: helper-session submit returns `200 /login` and flash `Invalid Details`, while a raw Selenium browser submit from this VPS can still hit a post-submit `Just a moment...` challenge.
+  - Practical meaning: the next blocker is no longer unknown route shape, broken helper encoding, or stale UA parity. It is either rejected credentials or another site-side login requirement that currently collapses into the same `Invalid Details` response.
+  - Boskuu's working PHP reference script then corrected the implementation model further by proving the exact faucet loop shape, including `/faucet/verify`, `antibotlinks`, `recaptchav3`, and `var wait`, so browser-first should no longer be treated as the default for this target.
+  - the later `opened multiple forms` blocker was not a real unknown server rule. It was the downstream effect of our own empty-`csrf_token_name` submit caused by the old faucet parser.
+  - after fixing CSRF extraction, preserving the live form context through helper DOM submit, preferring the direct anti-bot solver core, and retrying solver-shaped failures, the runner reached repeated real live faucet success oracles from the project command path.
+  - shortlinks mapping is no longer guessed. At least one full ClaimCoin shortlink lane is now closed from card listing to reward callback: `/links` -> `/links/go/85` -> external shortlink alias -> `/links/back/<token>` -> success oracle + quota decrement.
+- Removal warning:
+  - Do not remove the roadmap or change notes. Boskuu explicitly wants technical work to keep a live checklist and durable per-project change log.
+  - Do not treat the earlier browser-first fallback note as the primary path anymore. For this target, the default implementation path must now follow the working pure HTTP reference flow first, and only use browser bootstrap as fallback.
+
+## 2026-04-16 - Solver telemetry hardening
+- Reason:
+  - Boskuu wants ClaimCoin autoclaim and the anti-bot solver to mature together, not as two disconnected projects.
+- What changed:
+  - Extended `CaptchaClient` so the ClaimCoin anti-bot lane now returns structured solver metadata, not only the final `antibotlinks` string. Captured fields now include provider, ordered ids, confidence, elapsed solve time, raw solver response, and debug payload when available.
+  - Added persistent anti-bot attempt storage in `state/store.py`. Each live faucet attempt can now write a compact summary row into SQLite plus a full JSON capture file under `state/antibot-captures/`.
+  - Connected ClaimCoin directly to the new solver-core capture lane too. The runner now asks `antibot-image-solver` core to persist a provisional capture under `state/solver-core-captures/claimcoin/` for each attempt, then annotates that solver record with the final ClaimCoin verdict and the matching ClaimCoin capture path after submit.
+  - Wired the helper-session faucet loop in `services/account_runner.py` so every live anti-bot attempt gets labeled with a practical verdict bucket such as `accepted_success`, `server_reject_antibot`, `server_reject_captcha_or_session`, `csrf_or_submit_error`, or `solver_runtime_error`.
+  - Added score-gap tracking from solver debug output so the summary row can preserve `best_score`, `second_best_score`, and `score_gap` when the solver exposes them. This is the first cheap signal for low-confidence but technically accepted solves.
+  - Added CLI command `solver-stats` so Boskuu can inspect the growing real dataset instead of relying on rough anecdotal pass-rate estimates.
+  - Verified the new telemetry path with repeated real live faucet claims. Current live dataset snapshot already contains both accepted and rejected samples for `holiskabe@gmail.com`, including a real `server_reject_antibot` case that now links ClaimCoin verdict data back into the solver-core capture record.
+- Files touched:
+  - `projects/claimcoin-autoclaim/src/claimcoin_autoclaim/clients/captcha_client.py`
+  - `projects/claimcoin-autoclaim/src/claimcoin_autoclaim/services/account_runner.py`
+  - `projects/claimcoin-autoclaim/src/claimcoin_autoclaim/state/store.py`
+  - `projects/claimcoin-autoclaim/src/claimcoin_autoclaim/cli.py`
+  - `projects/claimcoin-autoclaim/README.md`
+  - `projects/claimcoin-autoclaim/state/solver-core-captures/claimcoin/` (runtime capture output, not source code)
+- Validation:
+  - `python3 -m compileall src`
+  - `PYTHONPATH=src python3 -m claimcoin_autoclaim.cli claim-once --config accounts.yaml`
+  - `PYTHONPATH=src python3 -m claimcoin_autoclaim.cli solver-stats --config accounts.yaml`
+- Important observed result:
+  - ClaimCoin now doubles as the live labeling harness for solver quality work. That closes the old blind spot where we had rough solver confidence but no durable accept/reject corpus tied to real server verdicts, and it also means solver-core provisional captures can now be cross-checked against real website outcomes.
+- Removal warning:
+  - Do not remove `state/antibot-captures/` or the new verdict logging lane casually. This is now the evidence backbone for making the anti-bot solver truly production-ready.
+
+## 2026-04-16 - First real autoclaim loop command
+- Reason:
+  - The project should not stop at `claim-once`. Boskuu asked for an actual autoclaim runner.
+- What changed:
+  - Promoted the existing scheduler skeleton into a usable CLI command: `run-loop`.
+  - `run-loop` now calls the real helper-session claim lane repeatedly, prints each cycle result, and chooses the next sleep window from the smallest returned `next_wait_seconds` plus a small settle buffer instead of blindly sleeping a fixed minute forever.
+  - Added knobs `--cycles`, `--sleep-floor`, `--sleep-cap`, and `--settle-seconds` so the loop can be smoke-tested safely or left running with bounded sleep behavior.
+  - Live smoke test `run-loop --cycles 1` succeeded on the working ClaimCoin account and produced another accepted anti-bot capture, which also raised the live `solver-stats` sample count from `1` to `2`.
+- Files touched:
+  - `projects/claimcoin-autoclaim/src/claimcoin_autoclaim/services/scheduler.py`
+  - `projects/claimcoin-autoclaim/src/claimcoin_autoclaim/cli.py`
+  - `projects/claimcoin-autoclaim/README.md`
+- Validation:
+  - `python3 -m compileall src`
+  - `PYTHONPATH=src python3 -m unittest discover -s tests -v`
+  - `PYTHONPATH=src python3 -m claimcoin_autoclaim.cli run-loop --config accounts.yaml --cycles 1`
+  - `PYTHONPATH=src python3 -m claimcoin_autoclaim.cli solver-stats --config accounts.yaml --account holiskabe@gmail.com`
+- Important observed result:
+  - This is now a real autoclaim project, not only a one-shot probe. The continuous loop still needs long-run soak testing, but the first bounded live loop already works through the proven helper-session lane.
+
+## 2026-04-16 - Live screen deployment without confidence gate
+- Reason:
+  - Boskuu explicitly asked to run the current ClaimCoin build as-is in `screen` first, without adding confidence-gate filtering yet, so raw accepted and rejected samples can continue feeding solver improvement.
+- What changed:
+  - Started the current runner in detached screen `claimcoin-autoclaim` with the command `python3 -u -m claimcoin_autoclaim.cli run-loop --config accounts.yaml`.
+  - Restarted the first screen launch once to switch Python into unbuffered mode so `logs/run-loop-screen.log` updates in real time instead of looking empty during the first cycle.
+  - Verified the live deployment after start: detached screen exists, Python run-loop process is active, and the first loop cycle wrote a successful live faucet claim into `logs/run-loop-screen.log`.
+- Files / runtime paths touched:
+  - runtime screen: `claimcoin-autoclaim`
+  - runtime log: `projects/claimcoin-autoclaim/logs/run-loop-screen.log`
+- Validation:
+  - `screen -ls`
+  - `ps -eo pid,etimes,cmd --sort=pid | grep -F 'claimcoin_autoclaim.cli run-loop --config accounts.yaml'`
+  - `tail -n 120 logs/run-loop-screen.log`
+- Important observed result:
+  - first live screen cycle succeeded with `ok=True` and success text `12.00024 CCP has been added to your balance`, so the screen deployment is not idle or fake-alive.
+
+## 2026-04-16 - Helper recovery and silent `/faucet` reload hardening
+- Reason:
+  - After the detached ClaimCoin loop was restarted, the lane degraded again in a confusing way: helper services were down, and once they were restored one direct `claim-once` attempt returned a plain authenticated `/faucet` page with no success text, no fail text, and no wait. That shape was too ambiguous to trust.
+- What changed:
+  - Recovered the local helper stack instead of blaming ClaimCoin blindly:
+    - confirmed `antibot-image-solver` was healthy again on `127.0.0.1:8010`
+    - found FlareSolverr was failing locally because its workspace clone had no Python environment and crashed on missing `bottle`
+    - created `state/flaresolverr-exp/src/.venv`, installed `requirements.txt`, and restarted FlareSolverr successfully on `127.0.0.1:8191`
+  - Ran controlled helper-session differentials to pin the real boundary:
+    - a fresh compare run proved the same DOM-submit lane can still produce a normal success oracle `12.00024 CCP has been added to your balance` plus `var wait = 7`
+    - a forced wrong-antibot run still produces the explicit server text `Invalid Anti-Bot Links`
+    - practical meaning: the earlier no-text `/faucet` result was not the normal server shape for a bad anti-bot answer, so the real problem is helper submit / return timing ambiguity, not simply OCR failure
+  - Hardened `src/claimcoin_autoclaim/services/account_runner.py` in the helper claim lane:
+    - increased helper DOM-submit settle wait from `3s` to `5s`
+    - if submit returns a fresh ready `/faucet` page with no success or fail text, the runner now performs one same-session settle probe to `/faucet`
+    - if that settle probe exposes a real success/fail oracle or a genuine cooldown-without-claim-form state, the runner promotes that evidence instead of logging a raw `unknown_failure`
+    - attempt summaries now preserve `post_submit_settle_probe` so later solver/debug review can distinguish true server rejects from silent reload races
+- Files / runtime paths touched:
+  - `projects/claimcoin-autoclaim/src/claimcoin_autoclaim/services/account_runner.py`
+  - `state/flaresolverr-exp/src/.venv/`
+  - `state/flaresolverr-exp/logs/run.log`
+  - `tmp-gh/antibot-image-solver/logs/api.log`
+- Validation:
+  - `python3 -m compileall src/claimcoin_autoclaim`
+  - controlled helper differential with saved raw HTML before/after submit
+  - controlled wrong-antibot differential proving explicit `Invalid Anti-Bot Links` still appears on real server reject
+  - `PYTHONPATH=src python3 -u -m claimcoin_autoclaim.cli claim-once --config accounts.yaml`
+- Important observed result:
+  - after the helper recovery plus settle-probe hardening, a clean single-run verification again succeeded with `ok=True` and success text `12.00024 CCP has been added to your balance`.
+- Removal warning:
+  - Do not remove the helper settle-probe path casually. ClaimCoin can sometimes bounce the helper DOM-submit lane back to an authenticated `/faucet` page without a parseable oracle, and that ambiguity now has an explicit recovery path instead of being mislabeled as solver failure.
+
+## 2026-04-16 - Move ClaimCoin runtime off OpenClaw cgroup into dedicated systemd services
+- Reason:
+  - The repeated `solver/helper mati mulu` incidents were traced to process hosting, not to OCR quality. `antibot-solver`, `flaresolverr`, and the detached ClaimCoin loop were all being launched from inside OpenClaw and inherited the `openclaw-beta.service` cgroup.
+  - When `openclaw-beta.service` restarted, systemd killed that whole control group. Journal evidence showed `KillMode=control-group` plus a forced stop at `2026-04-16 15:38:42 UTC`, including `screen` and Python child processes.
+- What changed:
+  - Added workspace-tracked unit definitions under `projects/claimcoin-autoclaim/ops/systemd/`:
+    - `claimcoin-antibot.service`
+    - `claimcoin-flaresolverr.service`
+    - `claimcoin-runloop.service`
+  - Linked those units into `/etc/systemd/system/`, reloaded systemd, and started them as standalone services instead of `screen` jobs.
+  - Kept the same runtime payloads and log targets, but moved ownership to separate service cgroups so OpenClaw restarts no longer take the ClaimCoin helper stack down with them.
+- Files / runtime paths touched:
+  - `projects/claimcoin-autoclaim/ops/systemd/claimcoin-antibot.service`
+  - `projects/claimcoin-autoclaim/ops/systemd/claimcoin-flaresolverr.service`
+  - `projects/claimcoin-autoclaim/ops/systemd/claimcoin-runloop.service`
+  - `/etc/systemd/system/claimcoin-antibot.service`
+  - `/etc/systemd/system/claimcoin-flaresolverr.service`
+  - `/etc/systemd/system/claimcoin-runloop.service`
+- Validation:
+  - `systemctl status claimcoin-antibot.service`
+  - `systemctl status claimcoin-flaresolverr.service`
+  - `systemctl status claimcoin-runloop.service`
+  - `cat /proc/<pid>/cgroup` for all 3 services now points to:
+    - `/system.slice/claimcoin-antibot.service`
+    - `/system.slice/claimcoin-flaresolverr.service`
+    - `/system.slice/claimcoin-runloop.service`
+  - helper health checks recovered successfully:
+    - `curl http://127.0.0.1:8010/health`
+    - `curl http://127.0.0.1:8191/`
+- Important observed result:
+  - The root cause of the repeated helper deaths is now pinned to service lifecycle coupling with OpenClaw, not to the solver core itself.
+  - After migration, the helper stack stays up under its own systemd units, although the live ClaimCoin lane can still produce ordinary claim-level outcomes such as `accepted_success` or `unknown_failure` depending on the site/session state.
+- Removal warning:
+  - Do not move these helper processes back into `screen` launched from inside OpenClaw unless the cgroup coupling problem is intentionally accepted again.

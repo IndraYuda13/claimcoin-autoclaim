@@ -1,0 +1,38 @@
+runtime:
+  base_url: https://claimcoin.in
+cloudflare:
+  provider: manual
+  endpoint: http://127.0.0.1:8191/v1
+  max_timeout_ms: 60000
+  session_ttl_minutes: 30
+captcha:
+  provider: hybrid
+  endpoint: https://api.waryono.my.id/in.php
+  result_endpoint: https://api.waryono.my.id/res.php
+  api_key: CHANGE_ME
+  poll_interval_seconds: 5
+  recaptcha_v3_sitekey: 6LdnVw4qAAAAAFPMxvegAK9JcBflI-0tb8YKMxZU
+  antibot_endpoint: http://127.0.0.1:8010/solve/antibot-image
+  antibot_core_python: /path/to/antibot-image-solver/.venv/bin/python
+  antibot_core_src: /path/to/antibot-image-solver/src
+  antibot_core_profile: fast
+  iconcaptcha_core_python: /path/to/iconcaptcha-solver/.venv/bin/python
+  iconcaptcha_core_src: /path/to/iconcaptcha-solver/src
+  iconcaptcha_similarity_threshold: 5.0
+  recaptcha_v3_endpoint: https://indrayuda-rv3.hf.space/recaptchav3
+  recaptcha_v3_action: homepage
+accounts:
+  - email: user@example.com
+    password: change-me
+    enabled: true
+    proxy: null
+    labels: [main]
+    withdraw:
+      enabled: false
+      method: "4"
+      wallet: CHANGE_ME
+      threshold_tokens: 2000
+      keep_tokens: 0
+      # optional override, default is available balance minus keep_tokens
+      fixed_amount_tokens: null
+      captcha: icaptcha

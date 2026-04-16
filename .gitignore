@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.venv/
+.env
+accounts.yaml
+proxies.txt
+state/
+logs/
+*.session
+*.sqlite3
+*.db
