@@ -107,7 +107,27 @@ class TelegramNotificationService:
 
     @classmethod
     def _build_fingerprint(cls, result: ClaimResult) -> str:
-        payload = cls._notification_payload(result)
+        raw = result.raw if isinstance(result.raw, dict) else {}
+        payload = {
+            "ok": result.ok,
+            "account": result.account,
+            "method": raw.get("method"),
+            "method_label": raw.get("method_label"),
+            "wallet_hint": raw.get("wallet_hint"),
+        }
+        if result.ok:
+            payload.update(
+                {
+                    "amount_value": raw.get("amount_value"),
+                    "success_text": raw.get("success_text") or result.detail,
+                }
+            )
+        else:
+            payload.update(
+                {
+                    "fail_text": raw.get("fail_text") or result.detail,
+                }
+            )
         stable = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(stable.encode("utf-8")).hexdigest()
 

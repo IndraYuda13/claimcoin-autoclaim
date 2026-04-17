@@ -87,6 +87,46 @@ class TelegramNotificationServiceTests(unittest.TestCase):
             )
         )
 
+    @patch("claimcoin_autoclaim.services.notification_service.requests.post")
+    def test_failure_dedupe_ignores_balance_drift(self, mock_post) -> None:
+        service, _store = self._make_service()
+        mock_post.return_value = _DummyResponse({"ok": True, "result": {"message_id": 88}})
+
+        first_result = ClaimResult(
+            False,
+            "holiskabe@gmail.com",
+            "The faucet does not have sufficient funds for this transaction.",
+            raw={
+                "amount_value": "6502",
+                "available_tokens": 6502,
+                "method": "4",
+                "method_label": "Litecoin - FaucetPay",
+                "wallet_hint": "ltc1q5...9mcn",
+                "fail_text": "The faucet does not have sufficient funds for this transaction.",
+            },
+        )
+        second_result = ClaimResult(
+            False,
+            "holiskabe@gmail.com",
+            "The faucet does not have sufficient funds for this transaction.",
+            raw={
+                "amount_value": "6514",
+                "available_tokens": 6514,
+                "method": "4",
+                "method_label": "Litecoin - FaucetPay",
+                "wallet_hint": "ltc1q5...9mcn",
+                "fail_text": "The faucet does not have sufficient funds for this transaction.",
+            },
+        )
+
+        first = service.notify_withdraw_result(first_result)
+        second = service.notify_withdraw_result(second_result)
+
+        self.assertTrue(first["sent"])
+        self.assertFalse(second["sent"])
+        self.assertEqual(second["reason"], "cooldown active")
+        self.assertEqual(mock_post.call_count, 1)
+
 
 if __name__ == "__main__":
     unittest.main()

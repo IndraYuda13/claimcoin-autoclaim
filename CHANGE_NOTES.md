@@ -8,6 +8,7 @@
   - Added `TelegramNotificationService` that sends plain Telegram Bot API `sendMessage` updates for real withdraw attempts.
   - Wired `MultiRunner.withdraw_all_once()` so every real withdraw result now passes through the Telegram notifier, while threshold-only `skip` results stay silent.
   - Added notification cooldown tracking into the SQLite state store so the same stuck withdraw failure does not ping the bot every scheduler loop.
+  - Hardened the failure-message fingerprint so repeated `insufficient funds` failures still dedupe even when the account balance drifts upward between claim cycles.
   - Extended withdraw planning output with `method_label` so notifications can show a human-readable payout method instead of only raw numeric ids.
   - Updated local docs and sample config so the notification lane is part of the supported project surface.
 - Files touched:
