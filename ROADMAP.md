@@ -58,6 +58,7 @@
 - [done] Prove the IconCaptcha canvas can be extracted from the live widget and solved by grouping repeated icons
 - [done] Integrate `withdraw-once` plus per-account withdraw config into the main ClaimCoin project
 - [done] Add Telegram bot notification lane for real auto-withdraw attempts with cooldown-based anti-spam
+- [done] Add method-specific withdraw fallback so LTC can retry as BTC on provider-insufficient-funds failures
 - [pending] Run a real payout only after Boskuu supplies the final wallet + preferred method for production use
 - [pending] Push both the standalone IconCaptcha solver repo and the main ClaimCoin repo to GitHub
 

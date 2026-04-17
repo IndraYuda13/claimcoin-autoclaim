@@ -625,6 +625,15 @@ class AccountRunner:
 
             plan = self._plan_withdraw(account, withdraw_state)
             raw.update({k: v for k, v in plan.items() if k not in {"wallet"}})
+            fallback_plan = self._plan_withdraw(
+                account,
+                withdraw_state,
+                method_override=account.withdraw.fallback_method,
+                wallet_override=account.withdraw.fallback_wallet,
+            )
+            raw["fallback_configured"] = bool(account.withdraw.fallback_method and account.withdraw.fallback_wallet)
+            if raw["fallback_configured"] and not fallback_plan.get("error") and not fallback_plan.get("skip"):
+                raw["fallback_target"] = {k: v for k, v in fallback_plan.items() if k not in {"wallet"}}
             if plan.get("error"):
                 self.state_store.save_account_state(account.email, cookies, raw)
                 return ClaimResult(False, account.email, str(plan["error"]), raw=raw)
@@ -632,138 +641,55 @@ class AccountRunner:
                 self.state_store.save_account_state(account.email, cookies, raw)
                 return ClaimResult(True, account.email, str(plan["detail"]), raw=raw)
 
-            client.request_evaluate(
-                session_id,
-                "const widget=document.querySelector('.iconcaptcha-widget'); if (!widget) return {clicked:false}; widget.click(); return {clicked:true};",
+            attempts: list[dict[str, object]] = []
+            primary_attempt = self._execute_withdraw_attempt(
+                client=client,
+                captcha=captcha,
+                session_id=session_id,
+                base_url=base_url,
+                plan=plan,
+                captcha_mode=account.withdraw.captcha,
             )
-            canvas_result = client.request_evaluate(
-                session_id,
-                """
-const canvas = document.querySelector('.iconcaptcha-modal__body-icons');
-const form = document.querySelector('form[action$="/withdraw/withdraw"]');
-return {
-  canvasDataUrl: canvas ? canvas.toDataURL('image/png') : null,
-  width: canvas ? canvas.width : null,
-  height: canvas ? canvas.height : null,
-  icCid: form?.querySelector('input[name="ic-cid"]')?.value || null,
-  icWid: form?.querySelector('input[name="ic-wid"]')?.value || null,
-  token: form?.querySelector('input[name="_iconcaptcha-token"]')?.value || null,
-};
-""",
-                wait_seconds=3,
-            )
-            canvas_state = canvas_result.get("response_json") or {}
-            raw["iconcaptcha_pre"] = {
-                "width": canvas_state.get("width"),
-                "height": canvas_state.get("height"),
-                "icCid": canvas_state.get("icCid"),
-                "icWid": canvas_state.get("icWid"),
-            }
-            canvas_data_url = str(canvas_state.get("canvasDataUrl") or "")
-            if not canvas_data_url:
-                self.state_store.save_account_state(account.email, cookies, raw)
-                return ClaimResult(False, account.email, "iconcaptcha canvas did not appear on withdraw form", raw=raw)
+            attempts.append(self._summarize_withdraw_attempt(primary_attempt))
+            raw["attempts"] = attempts
+            raw.update(primary_attempt["raw"])
+            cookies = primary_attempt.get("cookies") or cookies
 
-            iconcaptcha_result = captcha.solve(
-                CaptchaChallenge(
-                    kind="claimcoin_iconcaptcha",
-                    extra={
-                        "canvas_data_url": canvas_data_url,
-                        "cell_count": 5,
-                        "domain_hint": "claimcoin",
-                    },
+            if primary_attempt["ok"]:
+                self.state_store.save_account_state(account.email, cookies, raw)
+                return ClaimResult(True, account.email, str(primary_attempt["detail"]), raw=raw)
+
+            should_fallback = (
+                raw.get("fallback_configured")
+                and not fallback_plan.get("error")
+                and not fallback_plan.get("skip")
+                and self._should_retry_withdraw_fallback(str(primary_attempt.get("fail_text") or ""))
+            )
+            if should_fallback:
+                raw["primary_fail_text"] = primary_attempt.get("fail_text")
+                raw["fallback_used"] = True
+                fallback_attempt = self._execute_withdraw_attempt(
+                    client=client,
+                    captcha=captcha,
+                    session_id=session_id,
+                    base_url=base_url,
+                    plan=fallback_plan,
+                    captcha_mode=account.withdraw.captcha,
                 )
-            )
-            raw["iconcaptcha_solver"] = {
-                "provider": iconcaptcha_result.get("provider"),
-                "confidence": iconcaptcha_result.get("confidence"),
-                "selected_cell_number": iconcaptcha_result.get("selected_cell_number"),
-                "groups": iconcaptcha_result.get("groups") or [],
-                "elapsed_ms": iconcaptcha_result.get("elapsed_ms"),
-            }
-
-            client.request_evaluate(
-                session_id,
-                """
-const x = arguments[0];
-const y = arguments[1];
-const sel = document.querySelector('.iconcaptcha-modal__body-selection');
-if (!sel || !sel._ic_listeners) return {clicked:false, reason:'missing listeners'};
-const rect = sel.getBoundingClientRect();
-const evt = {currentTarget: sel, pageX: rect.left + window.scrollX + x, pageY: rect.top + window.scrollY + y};
-sel._ic_listeners.mouseenter(evt);
-sel._ic_listeners.mousemove(evt);
-sel._ic_listeners.click(evt);
-return {clicked:true};
-""",
-                script_args=[iconcaptcha_result["click_x"], iconcaptcha_result["click_y"]],
-            )
-            verify_result = client.request_evaluate(
-                session_id,
-                """
-const widget = document.querySelector('.iconcaptcha-widget');
-return {
-  success: widget ? widget.classList.contains('iconcaptcha-success') : false,
-  error: widget ? widget.classList.contains('iconcaptcha-error') : false,
-  widgetClass: widget ? widget.className : null,
-  bodyTitle: document.querySelector('.iconcaptcha-modal__body-title')?.innerText || null,
-};
-""",
-                wait_seconds=4,
-            )
-            verify_state = verify_result.get("response_json") or {}
-            raw["iconcaptcha_verify"] = verify_state
-            if not verify_state.get("success"):
-                detail = str(verify_state.get("bodyTitle") or "iconcaptcha verification did not complete")
+                attempts.append(self._summarize_withdraw_attempt(fallback_attempt))
+                raw["attempts"] = attempts
+                raw.update(fallback_attempt["raw"])
+                raw["fallback_from_method"] = plan.get("method")
+                raw["fallback_from_method_label"] = plan.get("method_label")
+                cookies = fallback_attempt.get("cookies") or cookies
                 self.state_store.save_account_state(account.email, cookies, raw)
-                return ClaimResult(False, account.email, detail, raw=raw)
+                if fallback_attempt["ok"]:
+                    return ClaimResult(True, account.email, str(fallback_attempt["detail"]), raw=raw)
+                return ClaimResult(False, account.email, str(fallback_attempt["detail"]), raw=raw)
 
-            client.request_evaluate(
-                session_id,
-                """
-const amount = arguments[0];
-const wallet = arguments[1];
-const method = arguments[2];
-const captcha = arguments[3];
-const form = document.querySelector('form[action$="/withdraw/withdraw"]');
-if (!form) return {submitted:false, reason:'form missing'};
-const amountInput = form.querySelector('input[name="amount"]');
-const walletInput = form.querySelector('input[name="wallet"]');
-const methodInput = form.querySelector(`input[name="method"][value="${method}"]`);
-const captchaSelect = form.querySelector('select[name="captcha"]');
-if (amountInput) amountInput.value = amount;
-if (walletInput) walletInput.value = wallet;
-if (methodInput) methodInput.checked = true;
-if (captchaSelect) captchaSelect.value = captcha;
-form.requestSubmit();
-return {submitted:true};
-""",
-                script_args=[plan["amount_value"], plan["wallet"], plan["method"], account.withdraw.captcha],
-            )
-            time.sleep(5)
-            after_result = client.request_evaluate(
-                session_id,
-                "return {href: location.href, title: document.title, html: document.documentElement.outerHTML};",
-            )
-            after_state = after_result.get("response_json") or {}
-            after_html = str(after_state.get("html") or "")
-            success, success_text, fail_text = parse_withdraw_response(after_html)
-            post_state = parse_withdraw_state(after_html) if after_html else WithdrawState(ready=False)
-            cookies = after_result.get("cookies") or cookies
-            raw.update(
-                {
-                    "result_url": after_state.get("href"),
-                    "result_title": after_state.get("title"),
-                    "success_text": success_text,
-                    "fail_text": fail_text,
-                    "post_balance_tokens": post_state.amount_tokens,
-                    "cookies": cookies,
-                }
-            )
+            raw["fallback_used"] = False
             self.state_store.save_account_state(account.email, cookies, raw)
-            if success:
-                return ClaimResult(True, account.email, success_text or "withdraw succeeded", raw=raw)
-            return ClaimResult(False, account.email, fail_text or "withdraw response did not contain success oracle", raw=raw)
+            return ClaimResult(False, account.email, str(primary_attempt["detail"]), raw=raw)
         except Exception as exc:
             raw["error"] = f"{type(exc).__name__}: {exc}"
             self.state_store.save_account_state(account.email, raw.get("cookies") if isinstance(raw.get("cookies"), dict) else {}, raw)
@@ -1007,16 +933,237 @@ return {submitted:true};
         except Exception:
             return None
 
+    def _execute_withdraw_attempt(
+        self,
+        *,
+        client: CloudflareClient,
+        captcha: CaptchaClient,
+        session_id: str,
+        base_url: str,
+        plan: dict[str, object],
+        captcha_mode: str,
+    ) -> dict[str, object]:
+        attempt_raw: dict[str, object] = {
+            "method": plan.get("method"),
+            "method_label": plan.get("method_label"),
+            "amount_tokens": plan.get("amount_tokens"),
+            "amount_value": plan.get("amount_value"),
+            "wallet_hint": plan.get("wallet_hint"),
+            "threshold_tokens": plan.get("threshold_tokens"),
+            "minimum_tokens": plan.get("minimum_tokens"),
+            "keep_tokens": plan.get("keep_tokens"),
+        }
+        withdraw_page = client.request_get(
+            session_id,
+            f"{base_url}/withdraw",
+            wait_seconds=2,
+        )
+        withdraw_html = withdraw_page.get("response") or ""
+        withdraw_state = parse_withdraw_state(withdraw_html)
+        cookies = withdraw_page.get("cookies") or {}
+        attempt_raw.update(
+            {
+                "withdraw_url": withdraw_page.get("url"),
+                "withdraw_status": withdraw_page.get("status"),
+                "method_options": [{"value": method.value, "label": method.label} for method in withdraw_state.methods],
+                "balance_tokens": withdraw_state.amount_tokens,
+                "minimum_tokens_text": withdraw_state.minimum_tokens_text,
+                "cookies": cookies,
+            }
+        )
+        if not withdraw_state.csrf_token:
+            return {
+                "ok": False,
+                "detail": "withdraw helper session did not reach authenticated withdraw form",
+                "fail_text": "withdraw helper session did not reach authenticated withdraw form",
+                "cookies": cookies,
+                "raw": attempt_raw,
+            }
+
+        client.request_evaluate(
+            session_id,
+            "const widget=document.querySelector('.iconcaptcha-widget'); if (!widget) return {clicked:false}; widget.click(); return {clicked:true};",
+        )
+        canvas_result = client.request_evaluate(
+            session_id,
+            """
+const canvas = document.querySelector('.iconcaptcha-modal__body-icons');
+const form = document.querySelector('form[action$="/withdraw/withdraw"]');
+return {
+  canvasDataUrl: canvas ? canvas.toDataURL('image/png') : null,
+  width: canvas ? canvas.width : null,
+  height: canvas ? canvas.height : null,
+  icCid: form?.querySelector('input[name="ic-cid"]')?.value || null,
+  icWid: form?.querySelector('input[name="ic-wid"]')?.value || null,
+  token: form?.querySelector('input[name="_iconcaptcha-token"]')?.value || null,
+};
+""",
+            wait_seconds=3,
+        )
+        canvas_state = canvas_result.get("response_json") or {}
+        attempt_raw["iconcaptcha_pre"] = {
+            "width": canvas_state.get("width"),
+            "height": canvas_state.get("height"),
+            "icCid": canvas_state.get("icCid"),
+            "icWid": canvas_state.get("icWid"),
+        }
+        canvas_data_url = str(canvas_state.get("canvasDataUrl") or "")
+        if not canvas_data_url:
+            return {
+                "ok": False,
+                "detail": "iconcaptcha canvas did not appear on withdraw form",
+                "fail_text": "iconcaptcha canvas did not appear on withdraw form",
+                "cookies": cookies,
+                "raw": attempt_raw,
+            }
+
+        iconcaptcha_result = captcha.solve(
+            CaptchaChallenge(
+                kind="claimcoin_iconcaptcha",
+                extra={
+                    "canvas_data_url": canvas_data_url,
+                    "cell_count": 5,
+                    "domain_hint": "claimcoin",
+                },
+            )
+        )
+        attempt_raw["iconcaptcha_solver"] = {
+            "provider": iconcaptcha_result.get("provider"),
+            "confidence": iconcaptcha_result.get("confidence"),
+            "selected_cell_number": iconcaptcha_result.get("selected_cell_number"),
+            "groups": iconcaptcha_result.get("groups") or [],
+            "elapsed_ms": iconcaptcha_result.get("elapsed_ms"),
+        }
+
+        client.request_evaluate(
+            session_id,
+            """
+const x = arguments[0];
+const y = arguments[1];
+const sel = document.querySelector('.iconcaptcha-modal__body-selection');
+if (!sel || !sel._ic_listeners) return {clicked:false, reason:'missing listeners'};
+const rect = sel.getBoundingClientRect();
+const evt = {currentTarget: sel, pageX: rect.left + window.scrollX + x, pageY: rect.top + window.scrollY + y};
+sel._ic_listeners.mouseenter(evt);
+sel._ic_listeners.mousemove(evt);
+sel._ic_listeners.click(evt);
+return {clicked:true};
+""",
+            script_args=[iconcaptcha_result["click_x"], iconcaptcha_result["click_y"]],
+        )
+        verify_result = client.request_evaluate(
+            session_id,
+            """
+const widget = document.querySelector('.iconcaptcha-widget');
+return {
+  success: widget ? widget.classList.contains('iconcaptcha-success') : false,
+  error: widget ? widget.classList.contains('iconcaptcha-error') : false,
+  widgetClass: widget ? widget.className : null,
+  bodyTitle: document.querySelector('.iconcaptcha-modal__body-title')?.innerText || null,
+};
+""",
+            wait_seconds=4,
+        )
+        verify_state = verify_result.get("response_json") or {}
+        attempt_raw["iconcaptcha_verify"] = verify_state
+        if not verify_state.get("success"):
+            detail = str(verify_state.get("bodyTitle") or "iconcaptcha verification did not complete")
+            return {
+                "ok": False,
+                "detail": detail,
+                "fail_text": detail,
+                "cookies": cookies,
+                "raw": attempt_raw,
+            }
+
+        client.request_evaluate(
+            session_id,
+            """
+const amount = arguments[0];
+const wallet = arguments[1];
+const method = arguments[2];
+const captcha = arguments[3];
+const form = document.querySelector('form[action$="/withdraw/withdraw"]');
+if (!form) return {submitted:false, reason:'form missing'};
+const amountInput = form.querySelector('input[name="amount"]');
+const walletInput = form.querySelector('input[name="wallet"]');
+const methodInput = form.querySelector(`input[name="method"][value="${method}"]`);
+const captchaSelect = form.querySelector('select[name="captcha"]');
+if (amountInput) amountInput.value = amount;
+if (walletInput) walletInput.value = wallet;
+if (methodInput) methodInput.checked = true;
+if (captchaSelect) captchaSelect.value = captcha;
+form.requestSubmit();
+return {submitted:true};
+""",
+            script_args=[plan["amount_value"], plan["wallet"], plan["method"], captcha_mode],
+        )
+        time.sleep(5)
+        after_result = client.request_evaluate(
+            session_id,
+            "return {href: location.href, title: document.title, html: document.documentElement.outerHTML};",
+        )
+        after_state = after_result.get("response_json") or {}
+        after_html = str(after_state.get("html") or "")
+        success, success_text, fail_text = parse_withdraw_response(after_html)
+        post_state = parse_withdraw_state(after_html) if after_html else WithdrawState(ready=False)
+        cookies = after_result.get("cookies") or cookies
+        attempt_raw.update(
+            {
+                "result_url": after_state.get("href"),
+                "result_title": after_state.get("title"),
+                "success_text": success_text,
+                "fail_text": fail_text,
+                "post_balance_tokens": post_state.amount_tokens,
+                "cookies": cookies,
+            }
+        )
+        return {
+            "ok": success,
+            "detail": success_text or fail_text or "withdraw response did not contain success oracle",
+            "success_text": success_text,
+            "fail_text": fail_text,
+            "cookies": cookies,
+            "raw": attempt_raw,
+        }
+
     @staticmethod
-    def _plan_withdraw(account: AccountConfig, withdraw_state: WithdrawState) -> dict[str, object]:
+    def _summarize_withdraw_attempt(attempt: dict[str, object]) -> dict[str, object]:
+        raw = attempt.get("raw") if isinstance(attempt.get("raw"), dict) else {}
+        return {
+            "ok": bool(attempt.get("ok")),
+            "detail": attempt.get("detail"),
+            "method": raw.get("method"),
+            "method_label": raw.get("method_label"),
+            "amount_value": raw.get("amount_value"),
+            "wallet_hint": raw.get("wallet_hint"),
+            "success_text": raw.get("success_text"),
+            "fail_text": raw.get("fail_text"),
+        }
+
+    @staticmethod
+    def _should_retry_withdraw_fallback(fail_text: str | None) -> bool:
+        lowered = (fail_text or "").strip().lower()
+        return "does not have sufficient funds for this transaction" in lowered
+
+    @staticmethod
+    def _plan_withdraw(
+        account: AccountConfig,
+        withdraw_state: WithdrawState,
+        *,
+        method_override: str | None = None,
+        wallet_override: str | None = None,
+    ) -> dict[str, object]:
         settings = account.withdraw
-        if not settings.wallet:
+        selected_wallet = wallet_override if wallet_override is not None else settings.wallet
+        selected_method = method_override if method_override is not None else settings.method
+        if not selected_wallet:
             return {"error": "withdraw wallet is not configured"}
-        if not settings.method:
+        if not selected_method:
             return {"error": "withdraw method is not configured"}
-        if withdraw_state.methods and settings.method not in {method.value for method in withdraw_state.methods}:
-            return {"error": f"withdraw method {settings.method} is not present on the current page"}
-        method_label = next((method.label for method in withdraw_state.methods if method.value == settings.method), settings.method)
+        if withdraw_state.methods and selected_method not in {method.value for method in withdraw_state.methods}:
+            return {"error": f"withdraw method {selected_method} is not present on the current page"}
+        method_label = next((method.label for method in withdraw_state.methods if method.value == selected_method), selected_method)
 
         available = float(withdraw_state.amount_tokens or 0.0)
         minimum_tokens = float(withdraw_state.minimum_tokens or 1000.0)
@@ -1051,10 +1198,10 @@ return {submitted:true};
             "available_tokens": available,
             "threshold_tokens": threshold_tokens,
             "minimum_tokens": minimum_tokens,
-            "method": settings.method,
+            "method": selected_method,
             "method_label": method_label,
-            "wallet": settings.wallet,
-            "wallet_hint": AccountRunner._mask_wallet(settings.wallet),
+            "wallet": selected_wallet,
+            "wallet_hint": AccountRunner._mask_wallet(selected_wallet),
             "keep_tokens": float(settings.keep_tokens or 0.0),
         }
 

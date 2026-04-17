@@ -20,6 +20,8 @@ class WithdrawSettings:
     enabled: bool = False
     method: str | None = None
     wallet: str | None = None
+    fallback_method: str | None = None
+    fallback_wallet: str | None = None
     threshold_tokens: float | None = None
     fixed_amount_tokens: float | None = None
     keep_tokens: float = 0.0
@@ -166,6 +168,8 @@ def app_config_from_dict(raw: dict[str, Any]) -> AppConfig:
                 enabled=bool((entry.get("withdraw") or {}).get("enabled", False)),
                 method=(entry.get("withdraw") or {}).get("method"),
                 wallet=(entry.get("withdraw") or {}).get("wallet"),
+                fallback_method=(entry.get("withdraw") or {}).get("fallback_method"),
+                fallback_wallet=(entry.get("withdraw") or {}).get("fallback_wallet"),
                 threshold_tokens=(
                     float((entry.get("withdraw") or {}).get("threshold_tokens"))
                     if (entry.get("withdraw") or {}).get("threshold_tokens") is not None

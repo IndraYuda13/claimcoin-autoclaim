@@ -39,6 +39,8 @@ accounts:
       enabled: false
       method: "4"
       wallet: CHANGE_ME
+      fallback_method: "5"
+      fallback_wallet: CHANGE_ME_BTC
       threshold_tokens: 2000
       keep_tokens: 0
       # optional override, default is available balance minus keep_tokens

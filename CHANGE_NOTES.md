@@ -1,5 +1,27 @@
 # ClaimCoin Autoclaim Change Notes
 
+## 2026-04-17 - BTC fallback for insufficient-funds withdraw failures
+- Reason:
+  - Boskuu allowed the withdraw lane to fall back from LTC FaucetPay to BTC FaucetPay when ClaimCoin says the first faucet provider has no funds.
+- What changed:
+  - Extended withdraw config with optional `fallback_method` and `fallback_wallet` fields.
+  - Reworked the helper-session withdraw path so a real withdraw attempt can retry with a second configured currency target inside the same authenticated session.
+  - The retry is intentionally narrow: it only triggers when the first attempt fails with the specific ClaimCoin oracle `The faucet does not have sufficient funds for this transaction.`
+  - Added planning tests for method/wallet override behavior and for the fallback trigger matcher.
+  - Updated docs and sample config so the intended live pattern is now explicit: try LTC first, then retry BTC if the LTC faucet provider is empty.
+- Files touched:
+  - `projects/claimcoin-autoclaim/src/claimcoin_autoclaim/config.py`
+  - `projects/claimcoin-autoclaim/src/claimcoin_autoclaim/services/account_runner.py`
+  - `projects/claimcoin-autoclaim/tests/test_account_runner.py`
+  - `projects/claimcoin-autoclaim/accounts.example.yaml`
+  - `projects/claimcoin-autoclaim/README.md`
+  - `projects/claimcoin-autoclaim/ROADMAP.md`
+- Validation:
+  - `PYTHONPATH=src python3 -m unittest discover -s tests`
+  - `PYTHONPATH=src python3 -m claimcoin_autoclaim.cli withdraw-once --config accounts.yaml`
+- Important observed result:
+  - On the live account, the first LTC attempt really did fail with the provider-insufficient-funds oracle. After this change, the next real verification target is whether the same condition now cleanly rolls into a BTC retry using the supplied backup wallet.
+
 ## 2026-04-17 - Telegram bot notifications for auto-withdraw attempts
 - Reason:
   - Boskuu asked for ClaimCoin auto-withdraw to notify a Telegram bot whenever a real withdraw attempt happens, while still avoiding spam from normal below-threshold loop cycles.
