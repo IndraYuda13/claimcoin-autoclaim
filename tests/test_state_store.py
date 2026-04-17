@@ -71,6 +71,48 @@ class StateStoreAntibotTelemetryTests(unittest.TestCase):
             self.assertEqual(summary["accept_rate"], 0.0)
             self.assertEqual(summary["average_confidence_reject"], 0.375)
 
+    def test_notification_event_cooldown(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "claimcoin.sqlite3"
+            store = StateStore(db_path)
+
+            self.assertFalse(
+                store.notification_sent_recently(
+                    channel="telegram",
+                    event_kind="withdraw_result",
+                    account="holiskabe@gmail.com",
+                    fingerprint="fp1",
+                    cooldown_seconds=3600,
+                )
+            )
+
+            store.record_notification_event(
+                channel="telegram",
+                event_kind="withdraw_result",
+                account="holiskabe@gmail.com",
+                fingerprint="fp1",
+                payload={"message_id": 123},
+            )
+
+            self.assertTrue(
+                store.notification_sent_recently(
+                    channel="telegram",
+                    event_kind="withdraw_result",
+                    account="holiskabe@gmail.com",
+                    fingerprint="fp1",
+                    cooldown_seconds=3600,
+                )
+            )
+            self.assertFalse(
+                store.notification_sent_recently(
+                    channel="telegram",
+                    event_kind="withdraw_result",
+                    account="holiskabe@gmail.com",
+                    fingerprint="fp1",
+                    cooldown_seconds=0,
+                )
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

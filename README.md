@@ -7,6 +7,7 @@ HTTP-first runner for ClaimCoin faucet, with helper-session-backed withdraw supp
 - Optional Cloudflare bootstrap hook via FlareSolverr before normal HTTP login
 - Faucet state check and claim runner
 - Auto-withdraw runner with IconCaptcha solving
+- Telegram bot notifications for real withdraw attempts
 - Captcha-solving adapter boundary
 - Multi-account scheduler
 - Optional per-account proxy binding
@@ -56,6 +57,7 @@ HTTP-first runner for ClaimCoin faucet, with helper-session-backed withdraw supp
 - `captcha.recaptcha_v3_endpoint` is meant for the separate rv3 token helper.
 - `captcha.provider: hybrid` keeps the older Waryono lane available as fallback while preferring the dedicated endpoints above when configured.
 - Auto-withdraw is configured per account under `withdraw:`. The current live page exposes method `4 = Litecoin - FaucetPay` and `5 = Bitcoin - FaucetPay`.
+- Telegram notifications are configured globally under `notifications.telegram`. The notifier only sends for real withdraw attempts, not for normal threshold skips, and repeated identical messages are cooled down to avoid spam.
 - The helper-session withdraw lane assumes the local patched FlareSolverr build already exposes `request.evaluate`, because that is how the IconCaptcha widget is read and clicked inside the live browser session.
 - Helper patch assumptions are summarized in `ops/HELPER_REQUIREMENTS.md`.
 - Every live ClaimCoin anti-bot attempt now writes a JSON capture under `state/antibot-captures/` plus a summarized row in `state/claimcoin.sqlite3`, so future solver tuning can be driven by real accept/reject data.

@@ -4,6 +4,7 @@ from ..config import AppConfig
 from ..models import ClaimResult
 from ..state.store import StateStore
 from .account_runner import AccountRunner
+from .notification_service import TelegramNotificationService
 
 
 class MultiRunner:
@@ -11,6 +12,7 @@ class MultiRunner:
         self.config = config
         self.state_store = StateStore(config.runtime.state_dir / "claimcoin.sqlite3")
         self.account_runner = AccountRunner(config, self.state_store)
+        self.telegram_notifier = TelegramNotificationService(config.notifications.telegram, self.state_store)
 
     def bootstrap_all(self) -> list[ClaimResult]:
         results: list[ClaimResult] = []
@@ -41,7 +43,9 @@ class MultiRunner:
         for account in self.config.accounts:
             if not account.enabled or not account.withdraw.enabled:
                 continue
-            results.append(self.account_runner.withdraw_once(account))
+            result = self.account_runner.withdraw_once(account)
+            result.raw["telegram_notification"] = self.telegram_notifier.notify_withdraw_result(result)
+            results.append(result)
         return results
 
     def claim_and_withdraw_all_once(self) -> list[ClaimResult]:

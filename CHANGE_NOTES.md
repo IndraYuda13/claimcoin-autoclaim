@@ -1,5 +1,33 @@
 # ClaimCoin Autoclaim Change Notes
 
+## 2026-04-17 - Telegram bot notifications for auto-withdraw attempts
+- Reason:
+  - Boskuu asked for ClaimCoin auto-withdraw to notify a Telegram bot whenever a real withdraw attempt happens, while still avoiding spam from normal below-threshold loop cycles.
+- What changed:
+  - Added global notification config under `notifications.telegram` with `bot_token`, `chat_id`, success/failure toggles, timeout, and cooldown controls.
+  - Added `TelegramNotificationService` that sends plain Telegram Bot API `sendMessage` updates for real withdraw attempts.
+  - Wired `MultiRunner.withdraw_all_once()` so every real withdraw result now passes through the Telegram notifier, while threshold-only `skip` results stay silent.
+  - Added notification cooldown tracking into the SQLite state store so the same stuck withdraw failure does not ping the bot every scheduler loop.
+  - Extended withdraw planning output with `method_label` so notifications can show a human-readable payout method instead of only raw numeric ids.
+  - Updated local docs and sample config so the notification lane is part of the supported project surface.
+- Files touched:
+  - `projects/claimcoin-autoclaim/src/claimcoin_autoclaim/config.py`
+  - `projects/claimcoin-autoclaim/src/claimcoin_autoclaim/state/store.py`
+  - `projects/claimcoin-autoclaim/src/claimcoin_autoclaim/services/notification_service.py`
+  - `projects/claimcoin-autoclaim/src/claimcoin_autoclaim/services/multi_runner.py`
+  - `projects/claimcoin-autoclaim/src/claimcoin_autoclaim/services/account_runner.py`
+  - `projects/claimcoin-autoclaim/src/claimcoin_autoclaim/services/__init__.py`
+  - `projects/claimcoin-autoclaim/tests/test_notification_service.py`
+  - `projects/claimcoin-autoclaim/tests/test_state_store.py`
+  - `projects/claimcoin-autoclaim/accounts.example.yaml`
+  - `projects/claimcoin-autoclaim/README.md`
+  - `projects/claimcoin-autoclaim/ROADMAP.md`
+- Validation:
+  - `python3 -m unittest discover -s tests`
+  - live Telegram Bot API test message through the configured bot token
+- Important observed result:
+  - The notification lane can be turned on independently from the actual payout settings, but a real auto-withdraw still cannot be enabled safely until Boskuu supplies the final payout wallet plus the intended ClaimCoin withdraw method.
+
 ## 2026-04-16 - Auto-withdraw + IconCaptcha lane
 - Reason:
   - Boskuu asked to extend the working ClaimCoin runner with auto-withdraw and to turn the withdraw IconCaptcha into its own reusable solver lane.

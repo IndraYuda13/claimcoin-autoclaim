@@ -21,6 +21,14 @@ captcha:
   iconcaptcha_similarity_threshold: 5.0
   recaptcha_v3_endpoint: https://indrayuda-rv3.hf.space/recaptchav3
   recaptcha_v3_action: homepage
+notifications:
+  telegram:
+    enabled: false
+    bot_token: CHANGE_ME
+    chat_id: CHANGE_ME
+    cooldown_seconds: 3600
+    send_on_success: true
+    send_on_failure: true
 accounts:
   - email: user@example.com
     password: change-me

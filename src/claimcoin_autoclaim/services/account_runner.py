@@ -1016,6 +1016,7 @@ return {submitted:true};
             return {"error": "withdraw method is not configured"}
         if withdraw_state.methods and settings.method not in {method.value for method in withdraw_state.methods}:
             return {"error": f"withdraw method {settings.method} is not present on the current page"}
+        method_label = next((method.label for method in withdraw_state.methods if method.value == settings.method), settings.method)
 
         available = float(withdraw_state.amount_tokens or 0.0)
         minimum_tokens = float(withdraw_state.minimum_tokens or 1000.0)
@@ -1051,6 +1052,7 @@ return {submitted:true};
             "threshold_tokens": threshold_tokens,
             "minimum_tokens": minimum_tokens,
             "method": settings.method,
+            "method_label": method_label,
             "wallet": settings.wallet,
             "wallet_hint": AccountRunner._mask_wallet(settings.wallet),
             "keep_tokens": float(settings.keep_tokens or 0.0),

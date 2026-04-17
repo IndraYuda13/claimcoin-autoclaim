@@ -75,10 +75,28 @@ class CloudflareConfig:
 
 
 @dataclass(slots=True)
+class TelegramNotificationConfig:
+    enabled: bool = False
+    bot_token: str | None = None
+    chat_id: str | None = None
+    api_base_url: str = "https://api.telegram.org"
+    timeout_seconds: float = 20.0
+    cooldown_seconds: int = 3600
+    send_on_success: bool = True
+    send_on_failure: bool = True
+
+
+@dataclass(slots=True)
+class NotificationsConfig:
+    telegram: TelegramNotificationConfig = field(default_factory=TelegramNotificationConfig)
+
+
+@dataclass(slots=True)
 class AppConfig:
     runtime: RuntimeConfig = field(default_factory=RuntimeConfig)
     captcha: CaptchaConfig = field(default_factory=CaptchaConfig)
     cloudflare: CloudflareConfig = field(default_factory=CloudflareConfig)
+    notifications: NotificationsConfig = field(default_factory=NotificationsConfig)
     accounts: list[AccountConfig] = field(default_factory=list)
 
 
@@ -123,6 +141,20 @@ def app_config_from_dict(raw: dict[str, Any]) -> AppConfig:
         use_profile=bool(cloudflare_raw.get("use_profile", False)),
         extra=dict(cloudflare_raw.get("extra") or {}),
     )
+    notifications_raw = raw.get("notifications") or {}
+    telegram_raw = notifications_raw.get("telegram") or {}
+    notifications = NotificationsConfig(
+        telegram=TelegramNotificationConfig(
+            enabled=bool(telegram_raw.get("enabled", False)),
+            bot_token=telegram_raw.get("bot_token"),
+            chat_id=(str(telegram_raw.get("chat_id")) if telegram_raw.get("chat_id") is not None else None),
+            api_base_url=str(telegram_raw.get("api_base_url", "https://api.telegram.org")),
+            timeout_seconds=float(telegram_raw.get("timeout_seconds", 20.0)),
+            cooldown_seconds=int(telegram_raw.get("cooldown_seconds", 3600)),
+            send_on_success=bool(telegram_raw.get("send_on_success", True)),
+            send_on_failure=bool(telegram_raw.get("send_on_failure", True)),
+        )
+    )
     accounts = [
         AccountConfig(
             email=entry["email"],
@@ -150,4 +182,10 @@ def app_config_from_dict(raw: dict[str, Any]) -> AppConfig:
         )
         for entry in accounts_raw
     ]
-    return AppConfig(runtime=runtime, captcha=captcha, cloudflare=cloudflare, accounts=accounts)
+    return AppConfig(
+        runtime=runtime,
+        captcha=captcha,
+        cloudflare=cloudflare,
+        notifications=notifications,
+        accounts=accounts,
+    )
