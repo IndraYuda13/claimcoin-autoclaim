@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import uuid
 from typing import Any
+from urllib.parse import urlparse
 
 import requests
 
@@ -14,7 +15,13 @@ class CloudflareClient:
         self.runtime = runtime
         self.config = config
 
-    def bootstrap(self, url: str, user_agent: str, session_id: str | None = None) -> dict[str, Any]:
+    def bootstrap(
+        self,
+        url: str,
+        user_agent: str,
+        session_id: str | None = None,
+        cookies: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "cmd": "request.get",
             "url": url,
@@ -25,6 +32,13 @@ class CloudflareClient:
             payload["session_ttl_minutes"] = self.config.session_ttl_minutes
         if user_agent:
             payload["userAgent"] = user_agent
+        if cookies:
+            domain = urlparse(url).hostname or urlparse(self.runtime.base_url).hostname or "claimcoin.in"
+            payload["cookies"] = [
+                {"name": name, "value": value, "domain": domain, "path": "/"}
+                for name, value in cookies.items()
+                if name and value is not None
+            ]
         return self._solve(payload, fallback_url=url, fallback_user_agent=user_agent)
 
     def create_session(self, session_id: str | None = None) -> str:

@@ -13,7 +13,6 @@ from ..parsers.dashboard import parse_dashboard_state
 from ..parsers.faucet import parse_claim_response, parse_faucet_state
 from ..parsers.links import parse_links_state
 from ..parsers.withdraw import parse_withdraw_response, parse_withdraw_state
-from ..services.claim_service import ClaimService
 from ..state.store import StateStore
 
 
@@ -37,7 +36,7 @@ class AccountRunner:
                 self.state_store.save_account_state(account.email, http.cookies_dict(), raw)
                 return ClaimResult(True, account.email, f"bootstrap OK login_url={artifacts.login_url}", raw=raw)
             except Exception as exc:
-                cf_raw = self._maybe_bootstrap_cloudflare(account)
+                cf_raw = self._maybe_bootstrap_cloudflare(account, http=http)
                 if cf_raw:
                     self._apply_cloudflare_context(http, cf_raw)
                     try:
@@ -71,7 +70,7 @@ class AccountRunner:
                 helper_result = self._login_probe_with_cloudflare_session(account)
                 if helper_result is not None:
                     return helper_result
-                cf_raw = self._maybe_bootstrap_cloudflare(account)
+                cf_raw = self._maybe_bootstrap_cloudflare(account, http=http)
                 if not cf_raw:
                     return ClaimResult(False, account.email, f"login probe failed: {type(exc).__name__}: {exc}")
                 self._apply_cloudflare_context(http, cf_raw)
@@ -87,7 +86,7 @@ class AccountRunner:
             try:
                 result = self._claim_once_with_http(http, account, used_cloudflare=False)
             except Exception as exc:
-                cf_raw = self._maybe_bootstrap_cloudflare(account)
+                cf_raw = self._maybe_bootstrap_cloudflare(account, http=http)
                 if not cf_raw:
                     return ClaimResult(False, account.email, f"claim bootstrap failed: {type(exc).__name__}: {exc}")
                 self._apply_cloudflare_context(http, cf_raw)
@@ -125,7 +124,7 @@ class AccountRunner:
                 if helper_result is not None:
                     result = helper_result
                 else:
-                    cf_raw = self._maybe_bootstrap_cloudflare(account)
+                    cf_raw = self._maybe_bootstrap_cloudflare(account, http=http)
                     if not cf_raw:
                         return ClaimResult(False, account.email, f"links probe failed: {type(exc).__name__}: {exc}")
                     self._apply_cloudflare_context(http, cf_raw)
@@ -189,8 +188,6 @@ class AccountRunner:
         auth = AuthClient(http)
         captcha = CaptchaClient(self.app_config.captcha)
         faucet = FaucetClient(http)
-        service = ClaimService(faucet_client=faucet, captcha_client=captcha)
-
         dashboard = faucet.fetch_dashboard()
         if not dashboard.logged_in:
             artifacts = auth.fetch_login_page()
@@ -209,13 +206,125 @@ class AccountRunner:
                     raw["cloudflare_url"] = cloudflare_raw.get("url")
                 return ClaimResult(False, account.email, "login failed or session not established", raw=raw)
 
-        result = service.claim_once(account.email)
+        state = faucet.fetch_state()
+        rendered_cf_raw = None
+        if not state.recaptcha_token:
+            rendered_cf_raw = self._maybe_bootstrap_cloudflare(
+                account,
+                http=http,
+                url=f"{self.app_config.runtime.base_url.rstrip('/')}/faucet",
+            )
+            if rendered_cf_raw:
+                self._apply_cloudflare_context(http, rendered_cf_raw)
+                rendered_state = parse_faucet_state(rendered_cf_raw.get("response") or "")
+                if rendered_state.csrf_token and rendered_state.challenge:
+                    state = rendered_state
+
+        result = self._claim_faucet_state_with_http(faucet, captcha, account.email, state)
         result.raw.setdefault("userAgent", http._session.headers.get("User-Agent"))
         result.raw.setdefault("cloudflare_bootstrap", used_cloudflare)
         if cloudflare_raw:
             result.raw.setdefault("cloudflare_status", cloudflare_raw.get("status"))
             result.raw.setdefault("cloudflare_url", cloudflare_raw.get("url"))
+        if rendered_cf_raw:
+            result.raw.setdefault("rendered_faucet_bootstrap", True)
+            result.raw.setdefault("rendered_faucet_url", rendered_cf_raw.get("url"))
         return result
+
+    def _claim_faucet_state_with_http(
+        self,
+        faucet: FaucetClient,
+        captcha: CaptchaClient,
+        account_email: str,
+        state,
+    ) -> ClaimResult:
+        if state.wait_seconds and state.wait_seconds > 0:
+            return ClaimResult(
+                ok=False,
+                account=account_email,
+                detail="faucet not ready",
+                next_wait_seconds=state.wait_seconds,
+                raw=state.raw,
+            )
+        if not state.csrf_token:
+            return ClaimResult(False, account_email, "csrf token not found on faucet page", raw=state.raw)
+        if not state.challenge:
+            return ClaimResult(False, account_email, "antibot challenge not found on faucet page", raw=state.raw)
+
+        attempt_id = uuid4().hex
+        state.challenge.extra["capture"] = {
+            "output_dir": str(self.app_config.runtime.state_dir / "solver-core-captures" / "claimcoin"),
+            "verdict": "uncertain",
+            "source": "claimcoin_http_direct",
+            "tags": ["claimcoin", "faucet", account_email, "http-direct"],
+            "challenge_id": attempt_id,
+        }
+        antibot = captcha.solve(state.challenge)
+        recaptcha = {"recaptchav3": state.recaptcha_token} if state.recaptcha_token else captcha.solve(
+            CaptchaChallenge(
+                kind="claimcoin_recaptchav3",
+                sitekey=captcha.config.recaptcha_v3_sitekey,
+                page_url=f"{faucet.http.runtime.base_url.rstrip('/')}/faucet",
+                action=captcha.config.recaptcha_v3_action,
+            )
+        )
+        payload = {
+            "captcha": "recaptchav3",
+            "recaptchav3": recaptcha["recaptchav3"],
+            "antibotlinks": antibot["antibotlinks"],
+            "csrf_token_name": state.csrf_token,
+        }
+        response = faucet.claim(state.claim_url or "/faucet/verify", payload)
+        ok, success_text, fail_text, next_wait = parse_claim_response(response.text)
+        detail = success_text or fail_text or f"unparsed claim response status={response.status_code}"
+        csrf_error = "opened multiple forms" in response.text.lower()
+        verdict = self._classify_antibot_verdict(ok, fail_text, csrf_error)
+        capture_payload = self._build_antibot_attempt_payload(
+            account_email=account_email,
+            attempt_id=attempt_id,
+            attempt_number=1,
+            solver_result=antibot,
+            faucet_state=state,
+            claim_result_url=str(getattr(response, "url", state.claim_url or "/faucet/verify")),
+            success_text=success_text,
+            fail_text=fail_text,
+            verdict=verdict,
+        )
+        capture_path = self.state_store.save_antibot_attempt(
+            account_email,
+            verdict,
+            self._build_antibot_attempt_summary(capture_payload),
+            capture_payload,
+        )
+        self._annotate_solver_core_capture(
+            antibot.get("capture"),
+            verdict=verdict,
+            success_text=success_text,
+            fail_text=fail_text,
+            claimcoin_capture_path=capture_path,
+        )
+        return ClaimResult(
+            ok=ok,
+            account=account_email,
+            detail=detail,
+            next_wait_seconds=next_wait,
+            raw={
+                **state.raw,
+                "payload_keys": sorted(payload.keys()),
+                "http_status": response.status_code,
+                "claim_url": state.claim_url or "/faucet/verify",
+                "used_page_recaptcha": bool(state.recaptcha_token),
+                "success_text": success_text,
+                "fail_text": fail_text,
+                "http_direct_submit": True,
+                "solver_provider": antibot.get("provider"),
+                "solver_confidence": antibot.get("confidence"),
+                "solver_elapsed_ms": antibot.get("elapsed_ms"),
+                "solver_capture_path": capture_path,
+                "solver_core_capture": antibot.get("capture"),
+                "solver_verdict": verdict,
+            },
+        )
 
     def _links_probe_with_http(
         self,
@@ -952,17 +1061,33 @@ class AccountRunner:
         if user_agent:
             http.set_user_agent(user_agent)
 
-    def _maybe_bootstrap_cloudflare(self, account: AccountConfig) -> dict | None:
+    def _maybe_bootstrap_cloudflare(
+        self,
+        account: AccountConfig,
+        *,
+        http: BrowserHttpClient | None = None,
+        url: str | None = None,
+    ) -> dict | None:
         if self.app_config.cloudflare.provider != "flaresolverr" or not self.app_config.cloudflare.endpoint:
             return None
         client = CloudflareClient(self.app_config.runtime, self.app_config.cloudflare)
+        target_url = url or f"{self.app_config.runtime.base_url.rstrip('/')}/login"
+        current_cookies = http.cookies_dict() if http is not None else None
+        current_user_agent = (
+            http._session.headers.get("User-Agent")
+            if http is not None and getattr(http, "_session", None) is not None
+            else self.app_config.runtime.user_agent
+        )
         try:
             cf_raw = client.bootstrap(
-                f"{self.app_config.runtime.base_url.rstrip('/')}/login",
-                self.app_config.runtime.user_agent,
+                target_url,
+                current_user_agent or self.app_config.runtime.user_agent,
+                cookies=current_cookies,
             )
             if account.proxy:
                 cf_raw["account_proxy"] = account.proxy
+            if current_cookies:
+                cf_raw["seed_cookie_names"] = sorted(current_cookies.keys())
             return cf_raw
         except Exception:
             return None

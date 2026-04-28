@@ -5,7 +5,7 @@ from typing import Any
 from ..models import DashboardState, FaucetState
 from ..parsers.dashboard import parse_dashboard_state
 from ..parsers.faucet import parse_faucet_state
-from .http_client import BrowserHttpClient
+from .http_client import BrowserHttpClient, CloudflareChallengeError, looks_like_cloudflare_challenge
 
 
 class FaucetClient:
@@ -27,7 +27,7 @@ class FaucetClient:
         return state
 
     def claim(self, claim_url: str, payload: dict[str, Any]):
-        return self.http.post(
+        response = self.http.post(
             claim_url,
             data=payload,
             headers={
@@ -36,3 +36,6 @@ class FaucetClient:
                 "Content-Type": "application/x-www-form-urlencoded",
             },
         )
+        if looks_like_cloudflare_challenge(getattr(response, "status_code", None), getattr(response, "text", None)):
+            raise CloudflareChallengeError(getattr(response, "status_code", None), str(getattr(response, "url", claim_url)))
+        return response

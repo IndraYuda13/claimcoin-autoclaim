@@ -1,5 +1,27 @@
 # ClaimCoin Autoclaim Change Notes
 
+## 2026-04-28 - Requests-first ClaimCoin lane with FlareSolverr cookie bridge
+- Reason:
+  - Boskuu clarified the target architecture: use HTTP requests as the main lane, and only invoke FlareSolverr when Cloudflare/JS state needs bootstrapping; then import FlareSolverr cookies and user-agent back into the HTTP session.
+- Evidence:
+  - Plain `requests` and system `curl` still received Cloudflare `403` on `/dashboard` even with valid `cf_clearance`, showing the cookie alone is not enough with the default TLS/browser fingerprint.
+  - `curl_cffi` with Chrome impersonation and the same cookies reached `/dashboard` with `200`, proving the missing layer was HTTP client fingerprint parity, not auth credentials.
+  - Direct HTTP faucet pages do not execute the reCAPTCHA JS, so the runner now uses FlareSolverr only to render `/faucet` when the page token is missing, then submits the actual claim through the HTTP client.
+- What changed:
+  - Added `curl_cffi>=0.11.0` and made `BrowserHttpClient` prefer Chrome-impersonated curl_cffi when available, falling back to normal `requests` when it is not installed.
+  - `CloudflareClient.bootstrap()` now accepts current HTTP cookies and sends them to FlareSolverr as browser cookies.
+  - `_maybe_bootstrap_cloudflare()` now seeds FlareSolverr with the current HTTP cookie jar and imports the returned cookies/user-agent back into the HTTP session.
+  - Added Cloudflare challenge detection for HTTP claim responses so a 403 challenge becomes an explicit retry boundary instead of an unparsed claim result.
+  - Reworked `_claim_once_with_http()` so the main submit can be HTTP-direct: requests/curl_cffi fetches dashboard and faucet, FlareSolverr renders `/faucet` only when the reCAPTCHA token is missing, then the final `/faucet/verify` submit is performed by the HTTP client.
+  - Direct HTTP submits now persist anti-bot telemetry into SQLite/capture files so `solver-stats` counts them too.
+- Validation:
+  - `.venv/bin/python -m unittest discover -s tests -v` -> `24 tests OK`.
+  - Live `.venv/bin/python -m claimcoin_autoclaim.cli claim-once --config accounts.yaml` succeeded with `http_direct_submit=true` and success text `12.00888 CCP has been added to your balance`.
+  - Current active telemetry after the verified direct run: `accepted=5`, `total_attempts=9`, `accept_rate=0.5556`.
+- Current architecture:
+  - Primary lane is now `curl_cffi/requests HTTP session -> detect CF/token gap -> FlareSolverr cookie + rendered token bootstrap -> import UA/cookies -> HTTP POST /faucet/verify`.
+  - Full DOM-submit helper remains a fallback lane for surfaces that cannot yet be completed by HTTP submit.
+
 ## 2026-04-28 - Restore faucet success via patched DOM-submit helper
 - Reason:
   - After the standard-FlareSolverr fallback, live `claim-once` produced repeated `Invalid Anti-Bot Links` even when the OCR-selected word order looked correct.

@@ -9,6 +9,25 @@ from ..config import RuntimeConfig
 from ..utils.headers import build_browser_headers
 from ..utils.proxies import normalize_proxy
 
+
+class CloudflareChallengeError(RuntimeError):
+    def __init__(self, status_code: int | None, url: str | None = None) -> None:
+        self.status_code = status_code
+        self.url = url
+        super().__init__(f"cloudflare challenge detected status={status_code} url={url or ''}".strip())
+
+
+def looks_like_cloudflare_challenge(status_code: int | None, text: str | None) -> bool:
+    body = (text or "").lower()
+    if status_code not in (403, 429, 503):
+        return False
+    return (
+        "just a moment" in body
+        or "cdn-cgi/challenge-platform" in body
+        or "cf-challenge" in body
+        or "cloudflare" in body and "verify you are human" in body
+    )
+
 try:
     from curl_cffi import requests as curl_requests
 except Exception:  # pragma: no cover
@@ -16,7 +35,7 @@ except Exception:  # pragma: no cover
 
 
 class BrowserHttpClient(AbstractContextManager["BrowserHttpClient"]):
-    def __init__(self, runtime: RuntimeConfig, proxy: str | None = None, use_curl_cffi: bool = False) -> None:
+    def __init__(self, runtime: RuntimeConfig, proxy: str | None = None, use_curl_cffi: bool = True) -> None:
         self.runtime = runtime
         self.proxy = normalize_proxy(proxy)
         self.use_curl_cffi = use_curl_cffi and curl_requests is not None
