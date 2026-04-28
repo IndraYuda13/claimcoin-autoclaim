@@ -277,6 +277,10 @@ class AccountRunner:
         captcha = CaptchaClient(self.app_config.captcha)
         base_url = self.app_config.runtime.base_url.rstrip("/")
         session_id = client.create_session()
+        raw: dict[str, object] = {
+            "helper_session": True,
+            "cloudflare_bootstrap": True,
+        }
         try:
             login_page = client.request_get(
                 session_id,
@@ -316,7 +320,7 @@ class AccountRunner:
             logged_in = submit_dashboard.logged_in or faucet_state.csrf_token is not None or "/faucet/verify" in faucet_html
             cookies = faucet_probe.get("cookies") or submit_result.get("cookies") or {}
 
-            raw = {
+            raw.update({
                 "submit_url": submit_url,
                 "status_code": submit_result.get("status"),
                 "location": final_url,
@@ -324,8 +328,6 @@ class AccountRunner:
                 "csrf_field_name": artifacts.csrf_field_name,
                 "csrf_cookie_name": artifacts.csrf_cookie_name,
                 "userAgent": submit_result.get("userAgent") or login_page.get("userAgent"),
-                "helper_session": True,
-                "cloudflare_bootstrap": True,
                 "invalid_details": invalid_details,
                 "challenge_hit": challenge_hit,
                 "submit_dashboard_logged_in": submit_dashboard.logged_in,
@@ -334,7 +336,7 @@ class AccountRunner:
                 "faucet_probe_has_wait": faucet_state.wait_seconds,
                 "faucet_probe_has_claim_form": bool(faucet_state.csrf_token),
                 "cookies": cookies,
-            }
+            })
 
             if invalid_details:
                 self.state_store.save_account_state(account.email, cookies, raw)
@@ -439,13 +441,12 @@ class AccountRunner:
                     }
                 )
                 claim_url = faucet_state.claim_url or f"{base_url}/faucet/verify"
-                claim_result = client.request_dom_submit(
-                    session_id,
-                    urlencode(payload),
-                    form_selector=f'form[action="{claim_url}"]',
-                    submit_selector=".claim-button",
+                claim_result = self._submit_claim_with_helper(
+                    client=client,
+                    session_id=session_id,
+                    claim_url=claim_url,
+                    post_data=urlencode(payload),
                     wait_seconds=5,
-                    fallback_url=claim_url,
                 )
                 claim_html = claim_result.get("response") or ""
                 ok, success_text, fail_text, next_wait = parse_claim_response(claim_html)
@@ -548,13 +549,36 @@ class AccountRunner:
             raw["claim_attempts"] = attempt_summaries
             self.state_store.save_account_state(account.email, cookies, raw)
             return ClaimResult(False, account.email, detail, raw=raw)
-        except Exception:
-            return None
+        except Exception as exc:
+            raw["error"] = f"{type(exc).__name__}: {exc}"
+            self.state_store.save_account_state(account.email, raw.get("cookies") if isinstance(raw.get("cookies"), dict) else {}, raw)
+            return ClaimResult(False, account.email, f"claim helper failed: {type(exc).__name__}: {exc}", raw=raw)
         finally:
             try:
                 client.destroy_session(session_id)
             except Exception:
                 pass
+
+    @staticmethod
+    def _submit_claim_with_helper(
+        *,
+        client: CloudflareClient,
+        session_id: str,
+        claim_url: str,
+        post_data: str,
+        wait_seconds: float,
+    ) -> dict:
+        try:
+            return client.request_dom_submit(
+                session_id,
+                post_data,
+                form_selector=f'form[action="{claim_url}"]',
+                submit_selector=".claim-button",
+                wait_seconds=wait_seconds,
+                fallback_url=claim_url,
+            )
+        except Exception:
+            return client.request_post(session_id, claim_url, post_data, wait_seconds=wait_seconds)
 
     def _withdraw_once_with_cloudflare_session(self, account: AccountConfig) -> ClaimResult | None:
         if self.app_config.cloudflare.provider != "flaresolverr" or not self.app_config.cloudflare.endpoint:

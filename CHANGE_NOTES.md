@@ -1,5 +1,21 @@
 # ClaimCoin Autoclaim Change Notes
 
+## 2026-04-28 - Claim helper fallback for standard FlareSolverr
+- Reason:
+  - Live `claim-once` still reported a generic `403 /dashboard` retry failure even though helper-session login and `/faucet` access worked.
+- Evidence:
+  - Manual helper trace reached authenticated `/faucet` with CSRF, page `recaptchav3`, and anti-bot challenge present.
+  - Docker FlareSolverr log showed the actual failing boundary: official FlareSolverr rejects custom command `request.dom_submit` with `Request parameter 'cmd' = 'request.dom_submit' is invalid`.
+- What changed:
+  - Added `_submit_claim_with_helper()` so the runner first tries patched `request.dom_submit`, then falls back to same helper-session `request.post` when DOM submit is unavailable.
+  - Added a regression test proving the fallback uses `request.post` after a DOM-submit failure.
+  - Made helper claim failures return explicit raw error context instead of collapsing to `None` and hiding the real boundary.
+- Validation:
+  - `PYTHONPATH=src python3 -m unittest discover -s tests -v` -> `18 tests OK`.
+  - Live `claim-once` now gets past the old `request.dom_submit` 500 boundary and performs 3 helper-session claim submits.
+- Current live blocker after this fix:
+  - All 3 live claim attempts returned server oracle `Invalid Anti-Bot Links` with solver provider `core`, so the active blocker moved from FlareSolverr submit support to anti-bot image solve quality / answer ordering for ClaimCoin.
+
 ## 2026-04-28 - Prefer standalone IconCaptcha HTTP API
 - Reason:
   - Boskuu asked to focus future IconCaptcha work on the standalone `IndraYuda13/iconcaptcha-solver` repo and use its new local HTTP API shape for easier reuse.
