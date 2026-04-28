@@ -577,7 +577,17 @@ class AccountRunner:
                 wait_seconds=wait_seconds,
                 fallback_url=claim_url,
             )
-        except Exception:
+        except Exception as exc:
+            # ClaimCoin's anti-bot answer is a space-separated field. Official FlareSolverr
+            # request.post rebuilds a synthetic form and percent-quotes values into the DOM,
+            # so `antibotlinks=123 456 789` reaches the server as a literal encoded string
+            # and is rejected as `Invalid Anti-Bot Links`. Only use request.post for payloads
+            # that do not carry the anti-bot answer.
+            if "antibotlinks=" in post_data:
+                raise RuntimeError(
+                    "ClaimCoin anti-bot submit requires request.dom_submit; "
+                    "official FlareSolverr request.post corrupts the space-separated antibotlinks value"
+                ) from exc
             return client.request_post(session_id, claim_url, post_data, wait_seconds=wait_seconds)
 
     def _withdraw_once_with_cloudflare_session(self, account: AccountConfig) -> ClaimResult | None:

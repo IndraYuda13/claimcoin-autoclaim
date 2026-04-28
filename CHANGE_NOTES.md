@@ -1,5 +1,23 @@
 # ClaimCoin Autoclaim Change Notes
 
+## 2026-04-28 - Restore faucet success via patched DOM-submit helper
+- Reason:
+  - After the standard-FlareSolverr fallback, live `claim-once` produced repeated `Invalid Anti-Bot Links` even when the OCR-selected word order looked correct.
+- Evidence:
+  - Current SQLite telemetry before the fix showed `accepted=0`, `server_reject_antibot=3`, `solver_runtime_error=1`.
+  - FlareSolverr upstream source confirms official `request.post` rebuilds a synthetic form and percent-quotes values into DOM inputs. ClaimCoin's anti-bot answer is space-separated, so the fallback corrupts `antibotlinks` before the browser submits it.
+  - Direct `requests` submit with correct cookies preserved the raw spaces but hit Cloudflare `403`, so bypassing the helper browser is not a valid replacement.
+- What changed:
+  - Restarted the patched local FlareSolverr from `/root/.openclaw/workspace/state/flaresolverr-exp/src` on `127.0.0.1:8195`, where `request.dom_submit` is supported.
+  - Updated the local live config to use `http://127.0.0.1:8195/v1`.
+  - Hardened `_submit_claim_with_helper()` so it no longer falls back to official `request.post` when the payload contains `antibotlinks=`; that fallback creates false anti-bot rejects.
+  - Updated the systemd unit `claimcoin-flaresolverr.service` to run the patched helper on `PORT=8195` and log to journal so it can start cleanly even if the old logs directory is absent.
+- Validation:
+  - `PYTHONPATH=src python3 -m unittest discover -s tests -v` -> `19 tests OK`.
+  - Live `claim-once --config /tmp/claimcoin_accounts_8195.yaml` succeeded: `12.00888 CCP has been added to your balance`.
+  - Live `claim-once --config accounts.yaml` succeeded again after config switch: `12.00888 CCP has been added to your balance`.
+  - Current active telemetry now shows `accepted=2`, `total_attempts=6`, `accept_rate=0.3333`; the earlier 3 rejects remain in the dataset as evidence of the broken official fallback.
+
 ## 2026-04-28 - Claim helper fallback for standard FlareSolverr
 - Reason:
   - Live `claim-once` still reported a generic `403 /dashboard` retry failure even though helper-session login and `/faucet` access worked.

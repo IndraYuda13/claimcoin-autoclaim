@@ -8,12 +8,13 @@ Type=simple
 User=root
 WorkingDirectory=/root/.openclaw/workspace/state/flaresolverr-exp/src
 Environment=HOME=/root
-ExecStartPre=/bin/mkdir -p /root/.openclaw/workspace/state/flaresolverr-exp/logs
+Environment=PORT=8195
+Environment=HEADLESS=true
 ExecStart=/root/.openclaw/workspace/state/flaresolverr-exp/src/.venv/bin/python src/flaresolverr.py
 Restart=always
 RestartSec=2
-StandardOutput=append:/root/.openclaw/workspace/state/flaresolverr-exp/logs/run.log
-StandardError=append:/root/.openclaw/workspace/state/flaresolverr-exp/logs/run.log
+StandardOutput=journal
+StandardError=journal
 
 [Install]
 WantedBy=multi-user.target

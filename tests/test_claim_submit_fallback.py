@@ -23,7 +23,7 @@ class _FakeCloudflareClient:
 
 
 class ClaimSubmitFallbackTests(unittest.TestCase):
-    def test_falls_back_to_helper_post_when_dom_submit_is_unavailable(self) -> None:
+    def test_falls_back_to_helper_post_when_dom_submit_is_unavailable_for_safe_payloads(self) -> None:
         client = _FakeCloudflareClient()
 
         result = AccountRunner._submit_claim_with_helper(
@@ -38,6 +38,21 @@ class ClaimSubmitFallbackTests(unittest.TestCase):
         self.assertEqual(client.post_calls, 1)
         self.assertEqual(client.post_data, "csrf_token_name=abc")
         self.assertEqual(result["status"], 200)
+
+    def test_does_not_fallback_to_helper_post_for_antibotlinks_payload(self) -> None:
+        client = _FakeCloudflareClient()
+
+        with self.assertRaisesRegex(RuntimeError, "requires request.dom_submit"):
+            AccountRunner._submit_claim_with_helper(
+                client=client,
+                session_id="s1",
+                claim_url="https://claimcoin.in/faucet/verify",
+                post_data="csrf_token_name=abc&antibotlinks=111+222+333",
+                wait_seconds=5,
+            )
+
+        self.assertEqual(client.dom_calls, 1)
+        self.assertEqual(client.post_calls, 0)
 
 
 if __name__ == "__main__":
