@@ -4,8 +4,8 @@ __pycache__/
 .env
 accounts.yaml
 proxies.txt
-state/
-logs/
+/state/
+/logs/
 *.session
 *.sqlite3
 *.db
