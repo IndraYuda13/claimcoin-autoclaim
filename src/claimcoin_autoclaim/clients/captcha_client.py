@@ -124,18 +124,6 @@ class CaptchaClient:
         capture: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         started_at = time.time()
-        if self.config.antibot_core_python and self.config.antibot_core_src:
-            try:
-                return self._finalize_antibot_result(
-                    self._solve_antibot_via_core(main_image, items, domain_hint=domain_hint, capture=capture),
-                    provider="core",
-                    started_at=started_at,
-                    domain_hint=domain_hint,
-                )
-            except Exception:
-                if not self.config.antibot_endpoint:
-                    raise
-
         if self.config.antibot_endpoint:
             payload = {
                 "instruction_image_base64": main_image,
@@ -159,6 +147,18 @@ class CaptchaClient:
                 return self._finalize_antibot_result(
                     data,
                     provider="api",
+                    started_at=started_at,
+                    domain_hint=domain_hint,
+                )
+            except Exception:
+                if not (self.config.antibot_core_python and self.config.antibot_core_src):
+                    raise
+
+        if self.config.antibot_core_python and self.config.antibot_core_src:
+            try:
+                return self._finalize_antibot_result(
+                    self._solve_antibot_via_core(main_image, items, domain_hint=domain_hint, capture=capture),
+                    provider="core",
                     started_at=started_at,
                     domain_hint=domain_hint,
                 )

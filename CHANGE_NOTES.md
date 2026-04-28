@@ -1,5 +1,27 @@
 # ClaimCoin Autoclaim Change Notes
 
+## 2026-04-28 - Prefer persistent AntiBot solver API over subprocess core
+- Reason:
+  - Boskuu asked why the anti-bot solver sometimes took very long. Active telemetry showed normal successful solves around 5.4-7.3s, but one outlier hit 46.1s. The current ClaimCoin integration was using the `core` lane, which spawns a fresh Python subprocess per solve and then runs many Tesseract calls.
+- Evidence:
+  - Active stats before this upgrade: `accepted=6`, `total_attempts=10`, provider counts mostly `core`, one old `unknown` runtime error.
+  - Antibot solver project is not a separate standalone repo here; it lives inside `/root/.openclaw/workspace/projects/indra-api-hub/integrations/antibot-image-solver`, with Git remote `https://github.com/IndraYuda13/indra-api-hub.git`.
+  - Existing ClaimCoin config already had `antibot_endpoint: http://127.0.0.1:8010/solve/antibot-image`, but the service unit pointed to stale `/root/.openclaw/workspace/tmp-gh/antibot-image-solver` and port `8010` was not listening.
+- What changed:
+  - Changed `CaptchaClient.solve_antibot_detailed()` to prefer the configured persistent API endpoint first, then fall back to the subprocess core only if the endpoint fails.
+  - Updated `ops/systemd/claimcoin-antibot.service` to run from the real indra-api-hub integration path with `PYTHONPATH=/root/.openclaw/workspace/projects/indra-api-hub/integrations/antibot-image-solver/src` and `ANTIBOT_OCR_PROFILE=fast`.
+  - Built `/root/.openclaw/workspace/projects/indra-api-hub/.venv` from `indra-api-hub/requirements.txt` and restarted `claimcoin-antibot.service`.
+  - Added a regression test proving the endpoint is preferred over `_solve_antibot_via_core()` when both are configured.
+- Validation:
+  - `curl http://127.0.0.1:8010/health` returned `ok=true`, service `antibot-image-solver`, version `0.1.0`.
+  - `.venv/bin/python -m unittest discover -s tests -v` -> `25 tests OK`.
+  - Live `claim-once` succeeded through the API provider twice:
+    - Run 1: `solver_provider=api`, solver `7279.07ms`, wall `14.03s`, success `12.00888 CCP has been added to your balance`.
+    - Run 2: `solver_provider=api`, solver `9677.92ms`, wall `15.76s`, success `12.00888 CCP has been added to your balance`.
+  - Active stats after verification: `accepted=7` after first API run, then another live success was observed immediately after.
+- Current conclusion:
+  - The anti-bot itself is not extremely hard; the heavy part is Tesseract OCR. This upgrade removes per-claim Python subprocess startup and makes the persistent API the default. Median solve is still OCR-bound, so the next deeper optimization would be OCR model/variant reduction or a trained lightweight recognizer, not more FlareSolverr work.
+
 ## 2026-04-28 - Requests-first ClaimCoin lane with FlareSolverr cookie bridge
 - Reason:
   - Boskuu clarified the target architecture: use HTTP requests as the main lane, and only invoke FlareSolverr when Cloudflare/JS state needs bootstrapping; then import FlareSolverr cookies and user-agent back into the HTTP session.

@@ -11,6 +11,42 @@ from claimcoin_autoclaim.clients.captcha_client import CaptchaClient
 from claimcoin_autoclaim.config import CaptchaConfig, app_config_from_dict
 
 
+class CaptchaClientAntibotApiTests(unittest.TestCase):
+    def test_antibot_endpoint_is_preferred_over_core_subprocess(self) -> None:
+        response = Mock()
+        response.json.return_value = {
+            "success": True,
+            "status": "solved",
+            "solution": {
+                "ordered_ids": ["111", "222", "333"],
+                "ordered_candidates": ["cat", "dog", "fox"],
+                "indexes_1based": [1, 2, 3],
+            },
+            "confidence": 0.91,
+            "meta": {"family": "animals"},
+            "debug": {"instruction_ocr": ["cat dog fox"]},
+        }
+        response.raise_for_status.return_value = None
+
+        client = CaptchaClient(
+            CaptchaConfig(
+                antibot_endpoint="http://127.0.0.1:8010/solve/antibot-image",
+                antibot_core_python="/usr/bin/python3",
+                antibot_core_src="/tmp/unused-core-src",
+            )
+        )
+
+        with patch("claimcoin_autoclaim.clients.captcha_client.requests.post", return_value=response) as post, \
+            patch.object(client, "_solve_antibot_via_core", return_value={}) as core:
+            result = client.solve_antibot_detailed("main", [{"id": "111", "image": "a"}], domain_hint="claimcoin")
+
+        core.assert_not_called()
+        post.assert_called_once()
+        self.assertEqual(result["provider"], "api")
+        self.assertEqual(result["antibotlinks"], "111 222 333")
+        self.assertEqual(result["ordered_ids"], ["111", "222", "333"])
+
+
 class CaptchaClientIconCaptchaApiTests(unittest.TestCase):
     def _build_canvas_data_url(self) -> str:
         width = 320
