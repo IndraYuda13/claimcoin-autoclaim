@@ -41,9 +41,10 @@ class CaptchaConfig:
     antibot_core_python: str | None = None
     antibot_core_src: str | None = None
     antibot_core_profile: str = "fast"
+    iconcaptcha_endpoint: str | None = None
     iconcaptcha_core_python: str | None = None
     iconcaptcha_core_src: str | None = None
-    iconcaptcha_similarity_threshold: float = 5.0
+    iconcaptcha_similarity_threshold: float = 20.0
     recaptcha_v3_endpoint: str | None = None
     recaptcha_v3_action: str = "homepage"
     extra: dict[str, str] = field(default_factory=dict)
@@ -126,9 +127,10 @@ def app_config_from_dict(raw: dict[str, Any]) -> AppConfig:
         antibot_core_python=captcha_raw.get("antibot_core_python"),
         antibot_core_src=captcha_raw.get("antibot_core_src"),
         antibot_core_profile=captcha_raw.get("antibot_core_profile", "fast"),
+        iconcaptcha_endpoint=captcha_raw.get("iconcaptcha_endpoint"),
         iconcaptcha_core_python=captcha_raw.get("iconcaptcha_core_python"),
         iconcaptcha_core_src=captcha_raw.get("iconcaptcha_core_src"),
-        iconcaptcha_similarity_threshold=float(captcha_raw.get("iconcaptcha_similarity_threshold", 5.0)),
+        iconcaptcha_similarity_threshold=float(captcha_raw.get("iconcaptcha_similarity_threshold", 20.0)),
         recaptcha_v3_endpoint=captcha_raw.get("recaptcha_v3_endpoint"),
         recaptcha_v3_action=captcha_raw.get("recaptcha_v3_action", "homepage"),
         extra=dict(captcha_raw.get("extra") or {}),

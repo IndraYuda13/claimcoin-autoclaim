@@ -49,8 +49,9 @@
 - [done] Persist structured anti-bot attempt metadata from live ClaimCoin runs
 - [done] Add a real-data `solver-stats` CLI summary over captured attempts
 - [in progress] Grow verdict-labeled corpus large enough to measure accept vs reject buckets honestly
-- [pending] Add reusable IconCaptcha solver module for future targets
+- [done] Add reusable IconCaptcha solver module for future targets
 - [done] Add reusable IconCaptcha least-repeated-cell solver for ClaimCoin withdraw
+- [done] Prefer the standalone local IconCaptcha HTTP API at `http://127.0.0.1:8091/solve`, with core/internal fallback if the API is down
 - [pending] Verify whether ClaimCoin login SmartCaptcha is real or only page copy noise
 
 ## 8. Add withdraw automation + IconCaptcha solver
@@ -74,7 +75,7 @@
 | --- | --- | --- |
 | Auth/session gate | done | Proven login POST target is `/auth/login` with `ci_session` + `csrf_cookie_name` context. The helper-session lane is now real and validated with a working account: `holiskabe@gmail.com / Yuda&4321` reaches authenticated `/dashboard` and `/faucet` using the same mobile-UA helper-session flow. Remaining auth caveat: raw Selenium login from this VPS can still hit post-submit Cloudflare `Just a moment...`, so helper-session auth remains the reliable path for now. |
 | Faucet state gate | done | Working PHP reference script proves readiness oracle is `var wait = <seconds>` inside `/faucet` HTML. |
-| Captcha gate | in progress | Active faucet lane uses external anti-bot image ordering plus reCAPTCHA v3 token `recaptchav3`. The runner now has direct config hooks for local `antibot-image-solver` and the separate rv3 helper, with Waryono kept as fallback. Register IconCaptcha and login SmartCaptcha clues should not be confused with the active faucet claim lane. |
+| Captcha gate | in progress | Active faucet lane uses external anti-bot image ordering plus reCAPTCHA v3 token `recaptchav3`. The runner now has direct config hooks for local `antibot-image-solver` and the separate rv3 helper, with Waryono kept as fallback. Withdraw IconCaptcha now prefers the standalone local API `iconcaptcha_endpoint` and falls back to core/internal solvers. Register IconCaptcha and login SmartCaptcha clues should not be confused with the active faucet claim lane. |
 | Reward/state mutation gate | done | The earlier `opened multiple forms ... without reloading` blocker was traced to a local parser bug, not an unknown server rule. Real faucet HTML uses `name="csrf_token_name" id="token" value="..."`, while the old parser only matched `name` followed immediately by `value`, so helper submits were sending an empty CSRF field. After fixing parser extraction and switching helper claim submit to same-page DOM submit, live `claim-once` succeeded on `holiskabe@gmail.com` with `Good job!` and a returned next-wait window. New hardening on the same boundary: if helper submit bounces back to a plain ready `/faucet` page with no oracle text, the runner now does one same-session settle probe before calling it unknown. |
 | Proxy / network fingerprint gate | pending | Still need to see how stable the pure HTTP lane stays under proxy rotation. |
 | Cloudflare clearance helper | in progress | Current code now has a configurable FlareSolverr hook for front-door recovery, and live testing proved it can fetch `/login` on this VPS. The helper-session-aware login lane is now wired and used by `check` and `login-probe`. But clearance still behaves session-bound, because normal `requests` and shell `curl` fall back to `403 cf-mitigated` even after reusing the returned cookies and user-agent. |

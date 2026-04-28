@@ -16,9 +16,10 @@ captcha:
   antibot_core_python: /path/to/antibot-image-solver/.venv/bin/python
   antibot_core_src: /path/to/antibot-image-solver/src
   antibot_core_profile: fast
+  iconcaptcha_endpoint: http://127.0.0.1:8091/solve
   iconcaptcha_core_python: /path/to/iconcaptcha-solver/.venv/bin/python
   iconcaptcha_core_src: /path/to/iconcaptcha-solver/src
-  iconcaptcha_similarity_threshold: 5.0
+  iconcaptcha_similarity_threshold: 20.0
   recaptcha_v3_endpoint: https://indrayuda-rv3.hf.space/recaptchav3
   recaptcha_v3_action: homepage
 notifications:

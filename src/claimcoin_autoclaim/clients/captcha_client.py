@@ -74,6 +74,17 @@ class CaptchaClient:
         domain_hint: str = "claimcoin",
     ) -> dict[str, Any]:
         started_at = time.time()
+        if self.config.iconcaptcha_endpoint:
+            try:
+                return self._finalize_iconcaptcha_result(
+                    self._solve_iconcaptcha_via_endpoint(canvas_data_url, cell_count=cell_count),
+                    provider="api",
+                    started_at=started_at,
+                    domain_hint=domain_hint,
+                )
+            except Exception:
+                pass
+
         if self.config.iconcaptcha_core_python and self.config.iconcaptcha_core_src:
             try:
                 return self._finalize_iconcaptcha_result(
@@ -242,6 +253,54 @@ print(json.dumps(result.to_dict(include_debug=True)))
 
         data = json.loads(completed.stdout)
         return data
+
+    def _solve_iconcaptcha_via_endpoint(
+        self,
+        canvas_data_url: str,
+        *,
+        cell_count: int = 5,
+    ) -> dict[str, Any]:
+        if not self.config.iconcaptcha_endpoint:
+            raise RuntimeError("iconcaptcha API endpoint is not configured")
+        response = requests.post(
+            self.config.iconcaptcha_endpoint,
+            json={
+                "canvas_data_url": canvas_data_url,
+                "cell_count": cell_count,
+                "similarity_threshold": self.config.iconcaptcha_similarity_threshold,
+                "return_debug": True,
+            },
+            timeout=self.config.timeout_seconds,
+        )
+        response.raise_for_status()
+        data = response.json()
+        if not data.get("success"):
+            raise RuntimeError(data.get("error") or "iconcaptcha API solver failed")
+        position = int(data.get("position") or 0)
+        if position < 1:
+            raise RuntimeError("iconcaptcha API returned empty position")
+        click_x = int(data.get("x", data.get("centerX", 0)))
+        click_y = int(data.get("y", data.get("centerY", 0)))
+        solution = {
+            "selected_cell_index": position - 1,
+            "selected_cell_number": position,
+            "click_x": click_x,
+            "click_y": click_y,
+            "groups": data.get("groups") or [],
+            "pairwise_mad": data.get("pairwise_mad") or [],
+            "distinctness": data.get("distinctness") or [],
+            "cell_count": data.get("cell_count", cell_count),
+            "width": data.get("width"),
+            "height": data.get("height"),
+            "similarity_threshold": data.get("similarity_threshold", self.config.iconcaptcha_similarity_threshold),
+        }
+        return {
+            "success": True,
+            "solution": solution,
+            "confidence": data.get("confidence"),
+            "meta": {"cell_count": solution["cell_count"], "endpoint": self.config.iconcaptcha_endpoint},
+            "raw_api": data,
+        }
 
     def _solve_iconcaptcha_via_core(
         self,

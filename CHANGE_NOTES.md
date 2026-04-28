@@ -1,5 +1,28 @@
 # ClaimCoin Autoclaim Change Notes
 
+## 2026-04-28 - Prefer standalone IconCaptcha HTTP API
+- Reason:
+  - Boskuu asked to focus future IconCaptcha work on the standalone `IndraYuda13/iconcaptcha-solver` repo and use its new local HTTP API shape for easier reuse.
+- What changed:
+  - Added `captcha.iconcaptcha_endpoint` config.
+  - `CaptchaClient.solve_iconcaptcha_detailed()` now tries the standalone local API first, then falls back to the configured external core subprocess, then falls back to the built-in ClaimCoin copy.
+  - The API response shape `position`, `x/y`, `centerX/centerY`, `groups`, and `confidence` is normalized back into ClaimCoin's existing `selected_cell_number`, `click_x`, and `click_y` fields, so withdraw code does not need to change.
+  - Synced the internal fallback solver default to the shift-aware `20.0` threshold used by the standalone solver.
+  - Updated `accounts.example.yaml`, `ROADMAP.md`, and local ignored `accounts.yaml` to point at `http://127.0.0.1:8091/solve`.
+- Files touched:
+  - `projects/claimcoin-autoclaim/src/claimcoin_autoclaim/config.py`
+  - `projects/claimcoin-autoclaim/src/claimcoin_autoclaim/clients/captcha_client.py`
+  - `projects/claimcoin-autoclaim/src/claimcoin_autoclaim/iconcaptcha_solver.py`
+  - `projects/claimcoin-autoclaim/tests/test_captcha_client.py`
+  - `projects/claimcoin-autoclaim/accounts.example.yaml`
+  - `projects/claimcoin-autoclaim/ROADMAP.md`
+- Validation:
+  - `PYTHONPATH=src python3 -m unittest tests.test_captcha_client tests.test_iconcaptcha_solver tests.test_withdraw_parser -v` -> `7 tests OK`.
+  - Started standalone `iconcaptcha-solver` API on `127.0.0.1:8091`; health returned `ok=true`.
+  - ClaimCoin `CaptchaClient` smoke against the real local API returned provider `api`, selected cell `4`, click `224,25`, confidence `0.99` on a synthetic 5-cell widget.
+- Caveat:
+  - Full `unittest discover` currently still hits a pre-existing import blocker for `claimcoin_autoclaim.state` in unrelated account-runner/state-store tests. The new focused IconCaptcha API lane tests pass.
+
 ## 2026-04-17 - BTC fallback for insufficient-funds withdraw failures
 - Reason:
   - Boskuu allowed the withdraw lane to fall back from LTC FaucetPay to BTC FaucetPay when ClaimCoin says the first faucet provider has no funds.
