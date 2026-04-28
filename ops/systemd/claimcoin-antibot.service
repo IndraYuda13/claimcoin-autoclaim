@@ -6,11 +6,10 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=root
-WorkingDirectory=/root/.openclaw/workspace/projects/indra-api-hub
+WorkingDirectory=/root/.openclaw/workspace/projects/antibot-image-solver
 Environment=HOME=/root
-Environment=PYTHONPATH=/root/.openclaw/workspace/projects/indra-api-hub/integrations/antibot-image-solver/src
 Environment=ANTIBOT_OCR_PROFILE=fast
-ExecStart=/root/.openclaw/workspace/projects/indra-api-hub/.venv/bin/python -m antibot_image_solver serve --host 127.0.0.1 --port 8010
+ExecStart=/root/.openclaw/workspace/projects/antibot-image-solver/.venv/bin/antibot-image-solver-api --host 127.0.0.1 --port 8010
 Restart=always
 RestartSec=2
 StandardOutput=journal
