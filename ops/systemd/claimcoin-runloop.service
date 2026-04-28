@@ -10,7 +10,7 @@ WorkingDirectory=/root/.openclaw/workspace/projects/claimcoin-autoclaim
 Environment=HOME=/root
 Environment=PYTHONPATH=/root/.openclaw/workspace/projects/claimcoin-autoclaim/src
 ExecStartPre=/bin/mkdir -p /root/.openclaw/workspace/projects/claimcoin-autoclaim/logs
-ExecStart=/usr/bin/python3 -u -m claimcoin_autoclaim.cli run-loop --config accounts.yaml
+ExecStart=/root/.openclaw/workspace/projects/claimcoin-autoclaim/.venv/bin/python -u -m claimcoin_autoclaim.cli run-loop --config accounts.yaml --sleep-floor 45 --sleep-cap 900 --settle-seconds 5
 Restart=always
 RestartSec=5
 StandardOutput=append:/root/.openclaw/workspace/projects/claimcoin-autoclaim/logs/run-loop-screen.log

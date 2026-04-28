@@ -67,8 +67,8 @@ def main() -> None:
             settle_seconds=args.settle_seconds,
         )
 
-        def _print_cycle(cycle: int, cycle_results) -> None:
-            print(f"=== cycle {cycle} ===")
+        def _print_cycle(cycle: int, cycle_results, cycle_elapsed_seconds: float) -> None:
+            print(f"=== cycle {cycle} elapsed_seconds={cycle_elapsed_seconds:.2f} ===")
             for result in cycle_results:
                 print(f"[{result.account}] ok={result.ok} {result.detail}")
                 if result.raw:

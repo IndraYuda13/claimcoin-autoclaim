@@ -27,9 +27,11 @@ class Scheduler:
         cycle = 0
         while True:
             cycle += 1
+            started_at = time.perf_counter()
             results = self.runner.claim_and_withdraw_all_once()
+            cycle_elapsed_seconds = time.perf_counter() - started_at
             if on_cycle:
-                on_cycle(cycle, results)
+                on_cycle(cycle, results, cycle_elapsed_seconds)
             if max_cycles is not None and cycle >= max_cycles:
                 return
             time.sleep(self._choose_sleep_seconds(results))
