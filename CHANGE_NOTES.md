@@ -472,3 +472,23 @@
   - The shadow-provider wiring is installed and active at the service boundary, but no live shadow entries can be collected until the ClaimCoin account gets energy again or another enabled account has a ready faucet form.
 - Next re-entry action:
   - Earn energy through the already-mapped shortlink wall or enable another ready account, then re-check `/tmp/antibot-ranker-shadow.jsonl` for provider rows during the next real anti-bot solve.
+
+## 2026-05-01 - Shortlink energy attempt before AI-ranker shadow soak
+- Reason:
+  - The first AI-ranker live shadow soak was blocked because the active ClaimCoin account had no faucet form and showed `Daily limit reached, claim from Shortlink Wall to earn energy`.
+- What changed / tried:
+  - Used authenticated helper session to inspect `/links`; visible energy-capable cards were `ShrinkEarn`, `Shrinkme`, `Shortano`, and `Shortino`, plus `EarNow` with `0 energy`.
+  - Ran the proven `Shrinkme` lane:
+    - `/links/go/85` redirected to `https://shrinkme.click/eKOhBxp`
+    - `shortlink-bypass-bot` returned ClaimCoin callback `/links/back/dNTPyCD6ja1XMf4meJ0k` through `mrproblogger-direct`
+    - opening the callback in the authenticated ClaimCoin helper session removed the `Shrinkme` card from the active wall, indicating that quota was consumed
+  - Re-tested `claim-once` with `ANTIBOT_RANKER_SHADOW_PROVIDER` after that callback.
+- Evidence / blocker:
+  - `/tmp/antibot-ranker-shadow.jsonl` remained at `0` rows because `/faucet` still had no `/faucet/verify` form.
+  - Fresh authenticated `/faucet` HTML still showed `Daily limit reached, claim from Shortlink Wall to earn energy`, no `csrf_token_name`, no `recaptchav3`, and `has_antibot_main=false`.
+  - Additional `ShrinkEarn` attempts resolved to `tpi.li` token-target callbacks, but opening those callbacks did not reduce the `ShrinkEarn` quota and did not unlock the faucet. Treat `tpi.li` token-extraction callbacks as not sufficient evidence for ClaimCoin reward mutation unless the ClaimCoin wall quota or balance actually changes.
+  - A targeted `Shortano` check redirected to `https://shortano.link/sOxx`, which is currently unsupported by `shortlink-bypass-bot`.
+- Important observed result:
+  - The shadow soak is still blocked by the site/account state, not by the ranker provider. One real `Shrinkme` shortlink callback was consumed, but it was not enough to restore a faucet claim form.
+- Next re-entry action:
+  - Either implement/support `shortano.link` and `shortino` lanes, add a real reward-verification parser for token-target callbacks, or use another ready ClaimCoin account. Do not keep replaying `ShrinkEarn` token callbacks if the quota does not decrement.

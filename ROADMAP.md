@@ -49,7 +49,7 @@
 - [done] Persist structured anti-bot attempt metadata from live ClaimCoin runs
 - [done] Add a real-data `solver-stats` CLI summary over captured attempts
 - [in progress] Grow verdict-labeled corpus large enough to measure accept vs reject buckets honestly
-- [in progress] Run AI-ranker no-submit shadow soak once the account has faucet energy again; service env is installed, but current `/faucet` page is daily-limit/no-form.
+- [in progress] Run AI-ranker no-submit shadow soak once the account has faucet energy again; service env is installed, current `/faucet` page is daily-limit/no-form, and one proven Shrinkme reward was not enough to restore the faucet form.
 - [done] Add reusable IconCaptcha solver module for future targets
 - [done] Add reusable IconCaptcha least-repeated-cell solver for ClaimCoin withdraw
 - [done] Prefer the standalone local IconCaptcha HTTP API at `http://127.0.0.1:8091/solve`, with core/internal fallback if the API is down
