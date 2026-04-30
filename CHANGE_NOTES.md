@@ -449,3 +449,26 @@
   - After migration, the helper stack stays up under its own systemd units, although the live ClaimCoin lane can still produce ordinary claim-level outcomes such as `accepted_success` or `unknown_failure` depending on the site/session state.
 - Removal warning:
   - Do not move these helper processes back into `screen` launched from inside OpenClaw unless the cgroup coupling problem is intentionally accepted again.
+
+## 2026-05-01 - AI ranker shadow env installed, live soak blocked by ClaimCoin daily limit
+- Reason:
+  - After `antibot-ai-ranker` added the persisted disagreement-gate artifact and `shadow-provider --artifact`, the next intended step was a live no-submit soak inside the ClaimCoin runner.
+- What changed:
+  - Added a systemd drop-in for `claimcoin-runloop.service` at `/etc/systemd/system/claimcoin-runloop.service.d/10-antibot-ranker-shadow.conf`.
+  - The active run-loop now receives:
+    - `ANTIBOT_RANKER_SHADOW_LOG=/tmp/antibot-ranker-shadow.jsonl`
+    - `ANTIBOT_RANKER_SHADOW_PROVIDER=/root/.openclaw/workspace/projects/antibot-ai-ranker/.venv/bin/python -m antibot_ai_ranker.cli shadow-provider --artifact /root/.openclaw/workspace/projects/antibot-ai-ranker/artifacts/disagreement-gate-v1.json`
+  - Restarted `claimcoin-runloop.service` after `systemctl daemon-reload` and verified the effective environment through `systemctl show`.
+- Evidence / blocker:
+  - One-off direct `claim-once` and forced helper-session claim both produced `csrf token not found on faucet page`, with `shadow_after=0`, so the AI provider was not invoked yet.
+  - Diagnostic helper fetches saved under `state/debug-shadow-soak/` showed the root cause clearly: the authenticated `/faucet` page currently contains `Daily limit reached, claim from Shortlink Wall to earn energy` and no `/faucet/verify` form, no `csrf_token_name`, no `recaptchav3`, and no main anti-bot instruction image.
+  - The parser's `antibot_item_count=3` in this state is from ad/sidebar image matches, not a real solvable faucet challenge, because `has_antibot_main=false` and `/faucet/verify` is absent.
+- Validation:
+  - `systemctl show claimcoin-runloop.service -p Environment`
+  - `systemctl status claimcoin-runloop.service`
+  - `PYTHONPATH=src .venv/bin/python -m claimcoin_autoclaim.cli claim-once --config accounts.yaml`
+  - direct helper diagnostic saved `state/debug-shadow-soak/faucet_wait{2,5,10}.html` and `forms_wait{2,5,10}.json`
+- Important observed result:
+  - The shadow-provider wiring is installed and active at the service boundary, but no live shadow entries can be collected until the ClaimCoin account gets energy again or another enabled account has a ready faucet form.
+- Next re-entry action:
+  - Earn energy through the already-mapped shortlink wall or enable another ready account, then re-check `/tmp/antibot-ranker-shadow.jsonl` for provider rows during the next real anti-bot solve.
