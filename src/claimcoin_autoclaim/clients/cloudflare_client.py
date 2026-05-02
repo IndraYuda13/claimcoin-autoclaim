@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import uuid
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse, urlunparse
 
 import requests
 
@@ -45,7 +45,7 @@ class CloudflareClient:
         session_id = session_id or f"claimcoin-{uuid.uuid4().hex[:12]}"
         payload: dict[str, Any] = {"cmd": "sessions.create", "session": session_id}
         if self.config.proxy:
-            payload["proxy"] = {"url": self.config.proxy}
+            payload["proxy"] = self._proxy_payload(self.config.proxy)
         if self.runtime.user_agent:
             payload["userAgent"] = self.runtime.user_agent
         if self.config.extra:
@@ -163,7 +163,7 @@ class CloudflareClient:
         if self.config.provider != "flaresolverr" or not self.config.endpoint:
             raise RuntimeError("cloudflare bootstrap is not configured")
         if self.config.proxy and "proxy" not in payload and payload.get("cmd") != "sessions.destroy":
-            payload["proxy"] = {"url": self.config.proxy}
+            payload["proxy"] = self._proxy_payload(self.config.proxy)
         response = requests.post(
             self.config.endpoint,
             json=payload,
@@ -172,3 +172,19 @@ class CloudflareClient:
         )
         response.raise_for_status()
         return response.json()
+
+    @staticmethod
+    def _proxy_payload(proxy: str) -> dict[str, str]:
+        parsed = urlparse(proxy)
+        if not parsed.username and not parsed.password:
+            return {"url": proxy}
+        netloc = parsed.hostname or ""
+        if parsed.port:
+            netloc = f"{netloc}:{parsed.port}"
+        clean_url = urlunparse((parsed.scheme, netloc, parsed.path or "", parsed.params, parsed.query, parsed.fragment))
+        payload = {"url": clean_url}
+        if parsed.username is not None:
+            payload["username"] = unquote(parsed.username)
+        if parsed.password is not None:
+            payload["password"] = unquote(parsed.password)
+        return payload

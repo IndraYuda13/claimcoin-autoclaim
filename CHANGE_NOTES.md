@@ -492,3 +492,19 @@
   - The shadow soak is still blocked by the site/account state, not by the ranker provider. One real `Shrinkme` shortlink callback was consumed, but it was not enough to restore a faucet claim form.
 - Next re-entry action:
   - Either implement/support `shortano.link` and `shortino` lanes, add a real reward-verification parser for token-target callbacks, or use another ready ClaimCoin account. Do not keep replaying `ShrinkEarn` token callbacks if the quota does not decrement.
+
+## 2026-05-02 - Mobile proxy reroute for ClaimCoin after VPS egress block
+- Reason:
+  - ClaimCoin direct VPS egress and stale FlareSolverr sessions were failing after cleanup. Boskuu asked to use the phone-backed Proxyrack mobile proxy.
+- What changed:
+  - Updated the local ignored `accounts.yaml` runtime config so `holiskabe@gmail.com` and the Cloudflare helper both use the working Proxyrack mobile endpoint.
+  - Fixed `CloudflareClient` proxy handling for authenticated proxies: FlareSolverr now receives `{url, username, password}` instead of an auth-embedded proxy URL, avoiding Chrome `ERR_NO_SUPPORTED_PROXIES`.
+  - Restarted `claimcoin-runloop.service` so the new proxy config and code are live.
+- Validation:
+  - Mobile proxy egress returned Indonesian Telkomsel IP via `ip-api`.
+  - Direct ClaimCoin `/login` through the configured account proxy returned the real login page (`status=200`, login form present), so the previous direct `403` VPS-egress blocker is cleared.
+  - Unit test added for authenticated FlareSolverr proxy payload; `python -m unittest tests.test_cloudflare_requests_bridge -v` passes.
+  - `claimcoin-runloop.service` is active after restart.
+- Remaining blockers:
+  - Claim flow now reaches the captcha boundary and fails at external RV3 endpoint `https://indrayuda-rv3.hf.space/recaptchav3` returning `404`.
+  - Withdraw helper still fails because FlareSolverr browser access to ClaimCoin through the mobile proxy is blocked by Cloudflare, even though direct `curl_cffi` HTTP with the same proxy reaches the login page. Next engineering step is to refactor withdraw away from FlareSolverr/browser-helper and into HTTP-core direct flow, or repair/replace the helper boundary.

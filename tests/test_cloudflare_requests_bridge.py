@@ -56,6 +56,37 @@ class CloudflareRequestsBridgeTests(unittest.TestCase):
             ],
         )
 
+    def test_authenticated_proxy_is_split_for_flaresolverr_payload(self) -> None:
+        client = CloudflareClient(
+            RuntimeConfig(base_url="https://claimcoin.in"),
+            CloudflareConfig(
+                provider="flaresolverr",
+                endpoint="http://127.0.0.1:8195/v1",
+                proxy="http://user:pass@mobile.free.proxyrack.net:9000",
+            ),
+        )
+        captured = {}
+
+        def fake_post(url, *, json, timeout, headers):
+            captured["payload"] = json
+
+            class Response:
+                def raise_for_status(self):
+                    return None
+
+                def json(self):
+                    return {"status": "ok"}
+
+            return Response()
+
+        with patch("claimcoin_autoclaim.clients.cloudflare_client.requests.post", fake_post):
+            client.create_session("claimcoin-test")
+
+        self.assertEqual(
+            captured["payload"]["proxy"],
+            {"url": "http://mobile.free.proxyrack.net:9000", "username": "user", "password": "pass"},
+        )
+
     def test_account_runner_sends_current_http_cookies_to_cloudflare_helper(self) -> None:
         config = AppConfig(
             runtime=RuntimeConfig(base_url="https://claimcoin.in"),
