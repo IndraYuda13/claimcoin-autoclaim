@@ -137,13 +137,64 @@ class AccountRunner:
             return result
 
     def withdraw_once(self, account: AccountConfig) -> ClaimResult:
-        result = self._withdraw_once_with_cloudflare_session(account)
-        if result is None:
-            return ClaimResult(False, account.email, "withdraw helper session is not configured")
+        try:
+            with BrowserHttpClient(self.app_config.runtime, proxy=account.proxy) as http:
+                self._load_cached_context(http, account)
+                result = self._withdraw_once_with_http_client(account, http)
+                if result.ok or result.raw.get("skip"):
+                    return result
+        except Exception as exc:
+            result = ClaimResult(False, account.email, f"withdraw HTTP-core failed: {type(exc).__name__}: {exc}", raw={"http_core": True})
+        helper_result = self._withdraw_once_with_cloudflare_session(account)
+        if helper_result is not None:
+            result = helper_result
         cookies_to_save = result.raw.get("cookies") if isinstance(result.raw.get("cookies"), dict) else {}
         if cookies_to_save:
             self.state_store.save_account_state(account.email, cookies_to_save, result.raw)
         return result
+
+    def _withdraw_once_with_http_client(self, account: AccountConfig, http: BrowserHttpClient) -> ClaimResult:
+        auth = AuthClient(http)
+        artifacts = auth.fetch_login_page()
+        login_response = auth.login(account.email, account.password, artifacts)
+        withdraw_response = http.get("/withdraw")
+        withdraw_response.raise_for_status()
+        withdraw_state = parse_withdraw_state(withdraw_response.text)
+        cookies = http.cookies_dict()
+        raw: dict[str, object] = {
+            "http_core": True,
+            "login_status": getattr(login_response, "status_code", None),
+            "login_location": login_response.headers.get("Location") if getattr(login_response, "headers", None) else None,
+            "withdraw_url": str(getattr(withdraw_response, "url", "/withdraw")),
+            "withdraw_status": getattr(withdraw_response, "status_code", None),
+            "method_options": [{"value": method.value, "label": method.label} for method in withdraw_state.methods],
+            "balance_tokens": withdraw_state.amount_tokens,
+            "minimum_tokens": withdraw_state.minimum_tokens,
+            "minimum_tokens_text": withdraw_state.minimum_tokens_text,
+            "userAgent": http._session.headers.get("User-Agent") if getattr(http, "_session", None) is not None else None,
+            "cookies": cookies,
+        }
+        if not withdraw_state.csrf_token:
+            self.state_store.save_account_state(account.email, cookies, raw)
+            return ClaimResult(False, account.email, "withdraw HTTP-core did not reach authenticated withdraw form", raw=raw)
+
+        plan = self._plan_withdraw(account, withdraw_state)
+        raw.update({k: v for k, v in plan.items() if k not in {"wallet"}})
+        if plan.get("error"):
+            self.state_store.save_account_state(account.email, cookies, raw)
+            return ClaimResult(False, account.email, str(plan["error"]), raw=raw)
+        if plan.get("skip"):
+            self.state_store.save_account_state(account.email, cookies, raw)
+            return ClaimResult(True, account.email, str(plan["detail"]), raw=raw)
+
+        raw["requires_iconcaptcha_http_core"] = True
+        self.state_store.save_account_state(account.email, cookies, raw)
+        return ClaimResult(
+            False,
+            account.email,
+            "withdraw HTTP-core reached authenticated form, but direct IconCaptcha submit is not implemented yet",
+            raw=raw,
+        )
 
     def _login_probe_with_http(
         self,

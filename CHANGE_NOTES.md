@@ -508,3 +508,19 @@
 - Remaining blockers:
   - Claim flow now reaches the captcha boundary and fails at external RV3 endpoint `https://indrayuda-rv3.hf.space/recaptchav3` returning `404`.
   - Withdraw helper still fails because FlareSolverr browser access to ClaimCoin through the mobile proxy is blocked by Cloudflare, even though direct `curl_cffi` HTTP with the same proxy reaches the login page. Next engineering step is to refactor withdraw away from FlareSolverr/browser-helper and into HTTP-core direct flow, or repair/replace the helper boundary.
+
+## 2026-05-02 - HTTP-core withdraw threshold check
+- Reason:
+  - FlareSolverr/browser-helper withdraw stayed blocked by Cloudflare even through mobile proxy, causing repeated false withdraw failure alerts before the account even reached the withdraw form.
+- What changed:
+  - `withdraw_once()` now tries direct HTTP-core first using the account proxy and normal `curl_cffi` session.
+  - The HTTP-core path logs in, fetches `/withdraw`, parses the withdraw form, plans the configured method/wallet/threshold, and returns normal `skip` results without falling into the browser helper.
+  - Browser-helper remains only as fallback for non-skip cases until direct HTTP IconCaptcha submit is implemented.
+- Validation:
+  - Added unit coverage proving below-threshold withdraw skips without browser helper.
+  - Full test suite: `python -m unittest discover -s tests -v` -> 28 tests OK.
+  - Live `withdraw-once` through mobile proxy reached authenticated `/withdraw` and returned `ok=True withdraw skipped balance=660 threshold=1000` with Telegram notification skipped.
+  - Restarted `claimcoin-runloop.service`; fresh cycle now shows withdraw `ok=True` skip instead of FlareSolverr 500.
+- Remaining blocker:
+  - Faucet claim still fails at the configured RV3 endpoint returning `404`.
+  - A real payout above threshold still needs direct HTTP IconCaptcha submit implementation, because browser-helper remains blocked by Cloudflare.
