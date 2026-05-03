@@ -170,7 +170,13 @@ class CloudflareClient:
             timeout=max(30, self.config.max_timeout_ms / 1000 + 10),
             headers={"Content-Type": "application/json"},
         )
-        response.raise_for_status()
+        try:
+            response.raise_for_status()
+        except requests.HTTPError as exc:
+            body = (getattr(response, "text", "") or "").strip()
+            if len(body) > 500:
+                body = body[:500] + "..."
+            raise RuntimeError(f"flaresolverr HTTP {response.status_code}: {body or exc}") from exc
         return response.json()
 
     @staticmethod

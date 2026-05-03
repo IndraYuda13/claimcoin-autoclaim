@@ -3,6 +3,8 @@ from __future__ import annotations
 import unittest
 from unittest.mock import patch
 
+import requests
+
 from claimcoin_autoclaim.clients.cloudflare_client import CloudflareClient
 from claimcoin_autoclaim.config import AccountConfig, AppConfig, CloudflareConfig, RuntimeConfig
 from claimcoin_autoclaim.services.account_runner import AccountRunner
@@ -86,6 +88,29 @@ class CloudflareRequestsBridgeTests(unittest.TestCase):
             captured["payload"]["proxy"],
             {"url": "http://mobile.free.proxyrack.net:9000", "username": "user", "password": "pass"},
         )
+
+    def test_flaresolverr_http_error_includes_response_body(self) -> None:
+        client = CloudflareClient(
+            RuntimeConfig(base_url="https://claimcoin.in"),
+            CloudflareConfig(provider="flaresolverr", endpoint="http://127.0.0.1:8195/v1"),
+        )
+
+        class Response:
+            status_code = 500
+            text = '{"status":"error","message":"Cloudflare has blocked this request"}'
+
+            def raise_for_status(self):
+                raise requests.HTTPError("500 Server Error", response=self)
+
+            def json(self):
+                return {"status": "error"}
+
+        def fake_post(url, *, json, timeout, headers):
+            return Response()
+
+        with patch("claimcoin_autoclaim.clients.cloudflare_client.requests.post", fake_post):
+            with self.assertRaisesRegex(RuntimeError, "Cloudflare has blocked"):
+                client.create_session("claimcoin-test")
 
     def test_account_runner_sends_current_http_cookies_to_cloudflare_helper(self) -> None:
         config = AppConfig(
