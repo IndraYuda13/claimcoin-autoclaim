@@ -45,3 +45,14 @@
 - Added regression test `test_account_runner_uses_account_proxy_for_cloudflare_helper`.
 - Added unparsed claim response HTML capture under `state/debug-claim-responses/` to preserve future silent redirects/errors.
 - Verification: full test suite `30 tests OK`; `claimcoin-24x7` restarted; next live cycle succeeded for both accounts: `holiskabe@gmail.com` added `12.0372 CCP`, `lvtsundere@gmail.com` added `12 CCP`.
+
+## 2026-05-03 - lvtsundere auto-withdraw enabled
+
+- Runtime `accounts.yaml` updated to enable auto-withdraw for `lvtsundere@gmail.com` using the same payout policy as the main ClaimCoin account:
+  - primary method `4` Litecoin FaucetPay
+  - fallback method `5` Bitcoin FaucetPay
+  - threshold `1000` CCP
+  - `captcha: icaptcha`
+  - proxy remains Surfshark node-05 `127.0.0.1:31005`
+- `claimcoin-24x7` screen restarted so the ignored runtime config is loaded.
+- Live verification: next cycle claimed successfully for both accounts; `lvtsundere@gmail.com` then triggered auto-withdraw for `2058` CCP and returned success oracle `You have sent a withdrawal request successfully!` via Litecoin FaucetPay.
