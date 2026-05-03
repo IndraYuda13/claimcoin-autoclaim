@@ -68,3 +68,19 @@
   - all account-scoped Cloudflare helper sessions now use the account proxy instead of the global proxy, including claim, links, login-probe, and withdraw helpers.
   - login/withdraw helpers now detect `You are banned!` and return `account is banned` instead of generic authenticated-form failures.
 - Verification: full tests `32 OK`; `claimcoin-24x7` restarted.
+
+## 2026-05-04 - holiskabe withdraw helper proxy recovery
+
+- Incident: `holiskabe@gmail.com` auto-withdraw reported `withdraw helper failed: RuntimeError: flaresolverr HTTP 500` with Selenium `no such element: html` from patched FlareSolverr on `127.0.0.1:8195`.
+- Root cause evidence:
+  - Patched FlareSolverr had stale ClaimCoin sessions; after session cleanup and helper restart, the raw Selenium 500 disappeared.
+  - A fresh withdraw test on the existing node-01 proxy (`127.0.0.1:31001`) still failed before authenticated withdraw parsing: `/login` returned LiteSpeed `Bot Verification` / `/.lsrecap/recaptcha?/login`, so the runner had no method options and reported `Metode: -`.
+  - Proxy differential through patched FlareSolverr showed Surfshark node-01 through node-04 reached LiteSpeed `Bot Verification`, while node-05 (`127.0.0.1:31005`) reached the real ClaimCoin login form.
+- Runtime fix:
+  - Destroyed stale ClaimCoin helper sessions and restarted patched FlareSolverr on port `8195`.
+  - Updated ignored runtime `accounts.yaml` so `cloudflare.proxy` and `holiskabe@gmail.com` use Surfshark node-05 `http://127.0.0.1:31005`.
+  - Left `lvtsundere@gmail.com` disabled.
+- Verification:
+  - `login-probe` using node-05 succeeded with HTTP `303` to `https://claimcoin.in/dashboard`.
+  - `withdraw-once` using node-05 reached the authenticated withdraw page, parsed methods `4` Litecoin FaucetPay and `5` Bitcoin FaucetPay, then safely skipped because balance was `444` CCP and threshold/minimum was `1000` CCP.
+- Current state: withdraw helper is healthy again; no payout was sent because balance is below threshold.
