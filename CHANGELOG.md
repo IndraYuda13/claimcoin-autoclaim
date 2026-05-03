@@ -25,3 +25,12 @@
 - Added `scripts/start-claimcoin-screen.sh` and `scripts/claimcoin_dashboard.py`.
 - Runtime account proxy mapping updated in ignored `accounts.yaml`: `holiskabe@gmail.com` uses Surfshark node-01 `127.0.0.1:31001`; disabled `lvtsundere@gmail.com` is preassigned node-02 `127.0.0.1:31002` if re-enabled later.
 - Current account status: only `holiskabe@gmail.com` is enabled. `lvtsundere@gmail.com` remains disabled because live login-probe still failed (`301 /login?/login`) and should not be turned on without refreshed working credentials/cookies.
+
+## 2026-05-03 - second ClaimCoin account activation
+
+- Runtime `accounts.yaml` updated to enable `lvtsundere@gmail.com` with a distinct Surfshark proxy from the main account:
+  - `holiskabe@gmail.com` -> node-01 `http://127.0.0.1:31001`
+  - `lvtsundere@gmail.com` -> node-05 `http://127.0.0.1:31005`
+- Node-02, node-03, and node-04 were tested against ClaimCoin login through FlareSolverr and reached LiteSpeed `Bot Verification` instead of the real login form, so they were not used for the second account.
+- `lvtsundere@gmail.com` login-probe succeeded through node-05 with HTTP 303 to dashboard. After restarting `claimcoin-24x7`, both accounts are included in the screen run-loop.
+- Current known issue: `lvtsundere@gmail.com` claim attempts are reaching submit but returning unparsed HTTP 200 / `unknown_failure` solver verdict in current cycles. Keep monitoring/tuning; do not report it as fully claiming successfully until a success oracle appears.
