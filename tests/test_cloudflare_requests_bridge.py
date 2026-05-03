@@ -112,6 +112,30 @@ class CloudflareRequestsBridgeTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "Cloudflare has blocked"):
                 client.create_session("claimcoin-test")
 
+    def test_account_runner_uses_account_proxy_for_cloudflare_helper(self) -> None:
+        config = AppConfig(
+            runtime=RuntimeConfig(base_url="https://claimcoin.in"),
+            cloudflare=CloudflareConfig(
+                provider="flaresolverr",
+                endpoint="http://127.0.0.1:8195/v1",
+                proxy="http://global-proxy:9000",
+            ),
+        )
+        seen = {}
+
+        class FakeCloudflareClient:
+            def __init__(self, runtime, config):
+                seen["proxy"] = config.proxy
+
+            def bootstrap(self, *args, **kwargs):
+                return {"status": 200, "cookies": {"cf_clearance": "solved"}, "userAgent": "UA"}
+
+        runner = AccountRunner(config, _FakeStateStore())  # type: ignore[arg-type]
+        account = AccountConfig(email="a@example.com", password="p", proxy="http://account-proxy:9000")
+        with patch("claimcoin_autoclaim.services.account_runner.CloudflareClient", FakeCloudflareClient):
+            runner._maybe_bootstrap_cloudflare(account, http=_FakeHttp(), url="https://claimcoin.in/faucet")
+        self.assertEqual(seen["proxy"], "http://account-proxy:9000")
+
     def test_account_runner_sends_current_http_cookies_to_cloudflare_helper(self) -> None:
         config = AppConfig(
             runtime=RuntimeConfig(base_url="https://claimcoin.in"),

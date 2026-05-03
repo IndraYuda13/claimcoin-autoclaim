@@ -34,3 +34,14 @@
 - Node-02, node-03, and node-04 were tested against ClaimCoin login through FlareSolverr and reached LiteSpeed `Bot Verification` instead of the real login form, so they were not used for the second account.
 - `lvtsundere@gmail.com` login-probe succeeded through node-05 with HTTP 303 to dashboard. After restarting `claimcoin-24x7`, both accounts are included in the screen run-loop.
 - Current known issue: `lvtsundere@gmail.com` claim attempts are reaching submit but returning unparsed HTTP 200 / `unknown_failure` solver verdict in current cycles. Keep monitoring/tuning; do not report it as fully claiming successfully until a success oracle appears.
+
+## 2026-05-03 - per-account Cloudflare helper proxy fix
+
+- Root cause for `lvtsundere@gmail.com` failing while `holiskabe@gmail.com` worked:
+  - HTTP account traffic used per-account proxy correctly (`lvtsundere` on Surfshark node-05), but the rendered Cloudflare/recaptcha helper path still used global `cloudflare.proxy` node-01.
+  - That mixed node-01 rendered `cf_clearance`/reCAPTCHA token into node-05 HTTP submit. ClaimCoin accepted the POST but redirected `/faucet/verify` to `/` with no SweetAlert, so the runner logged `unparsed claim response status=200`.
+  - Manual isolation proved the account itself was valid: `lvtsundere` succeeded when helper and HTTP both used node-01, and then succeeded after the helper was fixed to use account proxy node-05.
+- Fix: `_maybe_bootstrap_cloudflare()` now clones Cloudflare config with `account.proxy` for helper requests when an account proxy is set.
+- Added regression test `test_account_runner_uses_account_proxy_for_cloudflare_helper`.
+- Added unparsed claim response HTML capture under `state/debug-claim-responses/` to preserve future silent redirects/errors.
+- Verification: full test suite `30 tests OK`; `claimcoin-24x7` restarted; next live cycle succeeded for both accounts: `holiskabe@gmail.com` added `12.0372 CCP`, `lvtsundere@gmail.com` added `12 CCP`.

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import time
+from dataclasses import replace
 from urllib.parse import urlencode
 from uuid import uuid4
 
@@ -327,6 +328,12 @@ class AccountRunner:
         }
         response = faucet.claim(state.claim_url or "/faucet/verify", payload)
         ok, success_text, fail_text, next_wait = parse_claim_response(response.text)
+        debug_response_path = None
+        if not success_text and not fail_text:
+            debug_dir = self.app_config.runtime.state_dir / "debug-claim-responses"
+            debug_dir.mkdir(parents=True, exist_ok=True)
+            debug_response_path = debug_dir / f"{int(time.time() * 1000)}-{account_email.replace('@', '_at_')}-{attempt_id}.html"
+            debug_response_path.write_text(response.text, encoding="utf-8", errors="ignore")
         detail = success_text or fail_text or f"unparsed claim response status={response.status_code}"
         csrf_error = "opened multiple forms" in response.text.lower()
         verdict = self._classify_antibot_verdict(ok, fail_text, csrf_error)
@@ -374,6 +381,8 @@ class AccountRunner:
                 "solver_capture_path": capture_path,
                 "solver_core_capture": antibot.get("capture"),
                 "solver_verdict": verdict,
+                "debug_response_path": str(debug_response_path) if debug_response_path else None,
+                "claim_result_url": str(getattr(response, "url", state.claim_url or "/faucet/verify")),
             },
         )
 
@@ -1121,7 +1130,10 @@ class AccountRunner:
     ) -> dict | None:
         if self.app_config.cloudflare.provider != "flaresolverr" or not self.app_config.cloudflare.endpoint:
             return None
-        client = CloudflareClient(self.app_config.runtime, self.app_config.cloudflare)
+        cloudflare_config = self.app_config.cloudflare
+        if account.proxy:
+            cloudflare_config = replace(cloudflare_config, proxy=account.proxy)
+        client = CloudflareClient(self.app_config.runtime, cloudflare_config)
         target_url = url or f"{self.app_config.runtime.base_url.rstrip('/')}/login"
         current_cookies = http.cookies_dict() if http is not None else None
         current_user_agent = (
