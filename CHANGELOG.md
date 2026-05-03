@@ -16,3 +16,12 @@
   - Auto-withdraw success oracle observed: `8428 CCP has been sent to your FaucetPay.io account!`; post balance parsed as `0.0`.
   - `python -m unittest discover -s tests` passed: 29 tests OK.
 - Do not casually switch ClaimCoin back to the old Proxyrack credential unless a fresh proxy smoke confirms it no longer returns 407 and FlareSolverr `/login` succeeds through it.
+
+## 2026-05-03 - screen launcher and dashboard
+
+- Moved visible ClaimCoin 24x7 operation from hidden systemd-only run-loop into screen sessions on user request:
+  - `claimcoin-24x7` runs the autoclaim loop and tees output to `logs/run-loop-screen.log`.
+  - `claimcoin-dashboard` runs a Rich live dashboard showing screens, Cloudflare proxy, accounts, DB table counts, and recent cycles.
+- Added `scripts/start-claimcoin-screen.sh` and `scripts/claimcoin_dashboard.py`.
+- Runtime account proxy mapping updated in ignored `accounts.yaml`: `holiskabe@gmail.com` uses Surfshark node-01 `127.0.0.1:31001`; disabled `lvtsundere@gmail.com` is preassigned node-02 `127.0.0.1:31002` if re-enabled later.
+- Current account status: only `holiskabe@gmail.com` is enabled. `lvtsundere@gmail.com` remains disabled because live login-probe still failed (`301 /login?/login`) and should not be turned on without refreshed working credentials/cookies.
