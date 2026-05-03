@@ -136,6 +136,31 @@ class CloudflareRequestsBridgeTests(unittest.TestCase):
             runner._maybe_bootstrap_cloudflare(account, http=_FakeHttp(), url="https://claimcoin.in/faucet")
         self.assertEqual(seen["proxy"], "http://account-proxy:9000")
 
+    def test_account_runner_central_cloudflare_client_uses_account_proxy(self) -> None:
+        config = AppConfig(
+            runtime=RuntimeConfig(base_url="https://claimcoin.in"),
+            cloudflare=CloudflareConfig(
+                provider="flaresolverr",
+                endpoint="http://127.0.0.1:8195/v1",
+                proxy="http://global-proxy:9000",
+            ),
+        )
+        seen = {}
+
+        class FakeCloudflareClient:
+            def __init__(self, runtime, config):
+                seen["proxy"] = config.proxy
+
+        runner = AccountRunner(config, _FakeStateStore())  # type: ignore[arg-type]
+        account = AccountConfig(email="a@example.com", password="p", proxy="http://account-proxy:9000")
+        with patch("claimcoin_autoclaim.services.account_runner.CloudflareClient", FakeCloudflareClient):
+            runner._cloudflare_client(account)
+        self.assertEqual(seen["proxy"], "http://account-proxy:9000")
+
+    def test_account_runner_detects_banned_login_html(self) -> None:
+        self.assertTrue(AccountRunner._is_banned_html("<div>You are banned!</div>"))
+        self.assertFalse(AccountRunner._is_banned_html("<div>Welcome Back</div>"))
+
     def test_account_runner_sends_current_http_cookies_to_cloudflare_helper(self) -> None:
         config = AppConfig(
             runtime=RuntimeConfig(base_url="https://claimcoin.in"),

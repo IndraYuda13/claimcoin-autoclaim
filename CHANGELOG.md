@@ -56,3 +56,15 @@
   - proxy remains Surfshark node-05 `127.0.0.1:31005`
 - `claimcoin-24x7` screen restarted so the ignored runtime config is loaded.
 - Live verification: next cycle claimed successfully for both accounts; `lvtsundere@gmail.com` then triggered auto-withdraw for `2058` CCP and returned success oracle `You have sent a withdrawal request successfully!` via Litecoin FaucetPay.
+
+## 2026-05-03 - lvtsundere banned-state handling
+
+- Live diagnosis after auto-withdraw notifications showed `lvtsundere@gmail.com` is now account-banned by ClaimCoin:
+  - POST `/auth/login` returned `303 Location: /dashboard`, but the next authenticated GET `/dashboard` was redirected back to `/login`.
+  - The login page contained the explicit server oracle `You are banned!`.
+  - `/faucet` and `/withdraw` then landed on the public homepage, explaining the previous helper error `withdraw helper session did not reach authenticated withdraw form`.
+- Runtime action: disabled `lvtsundere@gmail.com` and its auto-withdraw in local `accounts.yaml` so the run-loop stops claim/withdraw attempts and Telegram failure spam.
+- Code hardening:
+  - all account-scoped Cloudflare helper sessions now use the account proxy instead of the global proxy, including claim, links, login-probe, and withdraw helpers.
+  - login/withdraw helpers now detect `You are banned!` and return `account is banned` instead of generic authenticated-form failures.
+- Verification: full tests `32 OK`; `claimcoin-24x7` restarted.

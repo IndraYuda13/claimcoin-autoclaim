@@ -208,20 +208,26 @@ class AccountRunner:
         auth = AuthClient(http)
         artifacts = auth.fetch_login_page()
         response = auth.login(account.email, account.password, artifacts)
+        dashboard_response = http.get("/dashboard")
+        dashboard_html = dashboard_response.text
         raw = {
             "submit_url": artifacts.form_action or "/auth/login",
             "status_code": getattr(response, "status_code", None),
             "location": response.headers.get("Location") if getattr(response, "headers", None) else None,
+            "dashboard_url": str(getattr(dashboard_response, "url", "/dashboard")),
             "captcha_kind": artifacts.captcha_kind,
             "csrf_field_name": artifacts.csrf_field_name,
             "csrf_cookie_name": artifacts.csrf_cookie_name,
             "userAgent": http._session.headers.get("User-Agent"),
             "cloudflare_bootstrap": used_cloudflare,
+            "account_banned": self._is_banned_html(dashboard_html),
         }
         if cloudflare_raw:
             raw["cloudflare_status"] = cloudflare_raw.get("status")
             raw["cloudflare_url"] = cloudflare_raw.get("url")
         self.state_store.save_account_state(account.email, http.cookies_dict(), raw)
+        if raw["account_banned"]:
+            return ClaimResult(False, account.email, "account is banned", raw=raw)
         return ClaimResult(
             ok=response.status_code in (302, 303),
             account=account.email,
@@ -442,7 +448,7 @@ class AccountRunner:
         if self.app_config.cloudflare.provider != "flaresolverr" or not self.app_config.cloudflare.endpoint:
             return None
 
-        client = CloudflareClient(self.app_config.runtime, self.app_config.cloudflare)
+        client = self._cloudflare_client(account)
         captcha = CaptchaClient(self.app_config.captcha)
         base_url = self.app_config.runtime.base_url.rstrip("/")
         session_id = client.create_session()
@@ -767,7 +773,7 @@ class AccountRunner:
             "helper_session": True,
             "cloudflare_bootstrap": True,
         }
-        client = CloudflareClient(self.app_config.runtime, self.app_config.cloudflare)
+        client = self._cloudflare_client(account)
         captcha = CaptchaClient(self.app_config.captcha)
         base_url = self.app_config.runtime.base_url.rstrip("/")
         session_id = client.create_session()
@@ -803,12 +809,14 @@ class AccountRunner:
             )
             withdraw_html = withdraw_page.get("response") or ""
             withdraw_state = parse_withdraw_state(withdraw_html)
+            account_banned = self._is_banned_html(submit_html) or self._is_banned_html(withdraw_html)
             cookies = withdraw_page.get("cookies") or submit_result.get("cookies") or {}
             raw.update(
                 {
                     "status_code": submit_result.get("status"),
                     "location": submit_result.get("url"),
                     "invalid_details": invalid_details,
+                    "account_banned": account_banned,
                     "withdraw_url": withdraw_page.get("url"),
                     "withdraw_status": withdraw_page.get("status"),
                     "method_options": [{"value": method.value, "label": method.label} for method in withdraw_state.methods],
@@ -822,6 +830,9 @@ class AccountRunner:
             if invalid_details:
                 self.state_store.save_account_state(account.email, cookies, raw)
                 return ClaimResult(False, account.email, "withdraw helper session rejected credentials with Invalid Details", raw=raw)
+            if account_banned:
+                self.state_store.save_account_state(account.email, cookies, raw)
+                return ClaimResult(False, account.email, "account is banned", raw=raw)
             if not withdraw_state.csrf_token:
                 self.state_store.save_account_state(account.email, cookies, raw)
                 return ClaimResult(False, account.email, "withdraw helper session did not reach authenticated withdraw form", raw=raw)
@@ -907,7 +918,7 @@ class AccountRunner:
         if self.app_config.cloudflare.provider != "flaresolverr" or not self.app_config.cloudflare.endpoint:
             return None
 
-        client = CloudflareClient(self.app_config.runtime, self.app_config.cloudflare)
+        client = self._cloudflare_client(account)
         base_url = self.app_config.runtime.base_url.rstrip("/")
         session_id = client.create_session()
         try:
@@ -989,7 +1000,7 @@ class AccountRunner:
     def _bootstrap_with_cloudflare_session(self, account: AccountConfig) -> ClaimResult | None:
         if self.app_config.cloudflare.provider != "flaresolverr" or not self.app_config.cloudflare.endpoint:
             return None
-        client = CloudflareClient(self.app_config.runtime, self.app_config.cloudflare)
+        client = self._cloudflare_client(account)
         session_id = client.create_session()
         try:
             result = client.request_get(session_id, f"{self.app_config.runtime.base_url.rstrip('/')}/login", wait_seconds=3)
@@ -1020,7 +1031,7 @@ class AccountRunner:
     def _login_probe_with_cloudflare_session(self, account: AccountConfig) -> ClaimResult | None:
         if self.app_config.cloudflare.provider != "flaresolverr" or not self.app_config.cloudflare.endpoint:
             return None
-        client = CloudflareClient(self.app_config.runtime, self.app_config.cloudflare)
+        client = self._cloudflare_client(account)
         session_id = client.create_session()
         try:
             login_page = client.request_get(
@@ -1104,6 +1115,16 @@ class AccountRunner:
             except Exception:
                 pass
 
+    def _cloudflare_client(self, account: AccountConfig | None = None) -> CloudflareClient:
+        cloudflare_config = self.app_config.cloudflare
+        if account is not None and account.proxy:
+            cloudflare_config = replace(cloudflare_config, proxy=account.proxy)
+        return CloudflareClient(self.app_config.runtime, cloudflare_config)
+
+    @staticmethod
+    def _is_banned_html(html: str) -> bool:
+        return "you are banned" in html.lower()
+
     def _load_cached_context(self, http: BrowserHttpClient, account: AccountConfig) -> None:
         cached = self.state_store.load_account_state(account.email)
         if cached.get("cookies"):
@@ -1130,10 +1151,7 @@ class AccountRunner:
     ) -> dict | None:
         if self.app_config.cloudflare.provider != "flaresolverr" or not self.app_config.cloudflare.endpoint:
             return None
-        cloudflare_config = self.app_config.cloudflare
-        if account.proxy:
-            cloudflare_config = replace(cloudflare_config, proxy=account.proxy)
-        client = CloudflareClient(self.app_config.runtime, cloudflare_config)
+        client = self._cloudflare_client(account)
         target_url = url or f"{self.app_config.runtime.base_url.rstrip('/')}/login"
         current_cookies = http.cookies_dict() if http is not None else None
         current_user_agent = (
